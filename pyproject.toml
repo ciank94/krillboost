@@ -21,6 +21,7 @@ xgboost_cpu = "^2.1.4"
 exploreNC = "krillboost.preprocess.exploreNC:main"
 downloadCop = "krillboost.preprocess.downloadCop:main"
 subsetCop = "krillboost.preprocess.subsetCop:main"
+fuseData = "krillboost.preprocess.dataFusion:main"
 
 [build-system]
 requires = ["poetry-core"]

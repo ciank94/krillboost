@@ -6,9 +6,9 @@ Install from source: in development mode:
 ```bash
 git clone https://github.com/ciank/krillboost.git
 cd krillboost
-pip install -e .
+python -m pip install -e .
 ```
-## Input Data
+## Preprocess Data
 ### Raw Data
 Input data should be stored in the `input` directory. The following datasets are used:
 - ssh.nc
@@ -34,6 +34,19 @@ exploreNC <filename>
 where filename is the path to the NetCDF dataset to explore e.g. `input/raw_data/test.nc`.
 
 ### Subset Data
+There is a command line tool to subset Copernicus datasets, with a template for configuration:
+```bash
+python subsetCop
+```
+where files are saved to `input/subset_data`.
+
+### Fuse Data
+To fuse Copernicus environmental datasets with krill data:
+```bash
+fuseData
+```
+where files are saved to `input/fusedData.csv`.
+
 
 
 
