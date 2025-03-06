@@ -22,6 +22,7 @@ exploreNC = "krillboost.preprocess.exploreNC:main"
 downloadCop = "krillboost.preprocess.downloadCop:main"
 subsetCop = "krillboost.preprocess.subsetCop:main"
 fuseData = "krillboost.preprocess.dataFusion:main"
+train = "krillboost.training.train:main"
 
 [build-system]
 requires = ["poetry-core"]
