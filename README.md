@@ -1,6 +1,10 @@
 # krillboost
 SDM predicting krill abundance using XGBoost
 
+## Navigation
+[Installation](#installation)
+[Preprocess Data](#preprocess-data)
+
 ## Installation
 Install from source: in development mode:
 ```bash
@@ -19,11 +23,11 @@ Input data should be stored in the `input` directory. The following datasets are
 
 To download copernicus datasets:
 ```bash
-python downloadCop <dataKey>
+downloadCop <dataKey>
 ```
 where dataKey is a key as listed in `config/download_settings.json`, for example:
 ```bash
-python downloadCop test
+downloadCop test
 ```
 will download SSH data from Copernicus Marine Service and save to `input/raw_data/test.nc`
 
@@ -36,7 +40,7 @@ where filename is the path to the NetCDF dataset to explore e.g. `input/raw_data
 ### Subset Data
 There is a command line tool to subset Copernicus datasets, with a template for configuration:
 ```bash
-python subsetCop
+subsetCop
 ```
 where files are saved to `input/subset_data`.
 
