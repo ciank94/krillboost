@@ -14,19 +14,19 @@ class DataFusion:
 
     def __init__(self):
         self.feature_path = 'input/subset_data'
-        self.krill_path = 'input/raw_data'
+        self.raw_path = 'input/raw_data'
         self.output_file = 'input/fusedData.csv'
         self.logger = logging.getLogger(self.__class__.__name__)
         self.logger.info(f"================={self.__class__.__name__}=====================")
         # open datasets
-        self.krillData = pd.read_table(os.path.join(self.krill_path, 'krillbase.csv'), sep=',', encoding='unicode_escape')
+        self.krillData = pd.read_table(os.path.join(self.raw_path, 'krillbase.csv'), sep=',', encoding='unicode_escape')
         self.chl = xr.open_dataset(os.path.join(self.feature_path, 'chl.nc'))
         self.iron = xr.open_dataset(os.path.join(self.feature_path, 'iron.nc'))
         self.sst = xr.open_dataset(os.path.join(self.feature_path, 'sst.nc'))
         self.ssh = xr.open_dataset(os.path.join(self.feature_path, 'ssh.nc'))
         self.vel = xr.open_dataset(os.path.join(self.feature_path, 'vel.nc'))
-        self.bath = xr.open_dataset(os.path.join(self.feature_path, 'bathymetry.nc'))
-        self.logger.info(f"Datasets loaded from {self.feature_path} and {self.krill_path}")
+        self.bath = xr.open_dataset(os.path.join(self.raw_path, 'bathymetry.nc'))
+        self.logger.info(f"Datasets loaded from {self.feature_path} and {self.raw_path}")
 
         # algorithm:
         self.subsetKrillData()
