@@ -313,7 +313,7 @@ def plotVariableDistributions():
     # Save the figure with tight layout
     plt.tight_layout()
     os.makedirs('output/figures', exist_ok=True)
-    plt_path = 'output/figures/variable_distributions.png'
+    plt_path = 'output/figures/subsetData.png'
     plt.savefig(plt_path, dpi=300, bbox_inches='tight')
     plt.close()
     logger.info(f"Saved variable distributions plot to: {plt_path}")
@@ -660,7 +660,7 @@ def plotKrillDistributions():
         
         # Save the figure
         os.makedirs('output/figures', exist_ok=True)
-        plt_path = 'output/figures/krill_distributions.png'
+        plt_path = 'output/figures/krillData.png'
         plt.savefig(plt_path, dpi=300, bbox_inches='tight')
         plt.close()
         logger.info(f"Saved krill distributions plot to: {plt_path}")

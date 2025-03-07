@@ -118,8 +118,8 @@ class KrillXGBoost:
         self.logger.info(f"Presence Model Accuracy: {accuracy:.4f}, AUC: {auc:.4f}")
         
         # Save model
-        self.presence_model.save_model("output/presence_model.json")
-        self.logger.info("Presence model saved to output/presence_model.json")
+        self.presence_model.save_model(os.makedirs("output/models", exist_ok=True) + "/presence_model.json")
+        self.logger.info("Presence model saved to output/models/presence_model.json")
 
     def train_abundance_model(self, X_train, X_test, y_train, y_test):
         self.logger.info("Training abundance regression model...")
@@ -156,8 +156,8 @@ class KrillXGBoost:
         self.logger.info(f"Abundance Model MSE: {mse:.4f}, RMSE: {rmse:.4f}")
         
         # Save model
-        self.abundance_model.save_model("output/abundance_model.json")
-        self.logger.info("Abundance model saved to output/abundance_model.json")
+        self.abundance_model.save_model(os.makedirs("output/models", exist_ok=True) + "/abundance_model.json")
+        self.logger.info("Abundance model saved to output/models/abundance_model.json")
 
     def evaluate_models(self, X_test_presence, y_presence_test, X_test_abundance, y_abundance_test):
         self.logger.info("Evaluating combined model performance...")

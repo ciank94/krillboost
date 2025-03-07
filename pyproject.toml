@@ -24,6 +24,7 @@ subsetCop = "krillboost.preprocess.subsetCop:main"
 fuseData = "krillboost.preprocess.dataFusion:main"
 trainXG = "krillboost.training.train:main"
 plotEnv = "krillboost.plotting.plotEnv:main"
+plotPredict = "krillboost.plotting.plotPredict:main"
 
 [build-system]
 requires = ["poetry-core"]
