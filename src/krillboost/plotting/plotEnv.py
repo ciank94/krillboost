@@ -1,5 +1,6 @@
 import logging
 import numpy as np
+from matplotlib.colors import LinearSegmentedColormap
 import matplotlib.pyplot as plt
 import cartopy.crs as ccrs
 import cartopy.feature as cfeature
@@ -116,6 +117,7 @@ def plotEnvData():
     cs4 = ax4.contour(bath.lon, bath.lat, 
                    masked_bathymetry, levels=contour_levels,
                    colors='grey', alpha=0.3, transform=projection)
+    ax4.legend().set_visible(False)  # Remove legend
     logger.info("Completed velocity subplot (4/6)")
 
     # Plot 5: CHL
@@ -332,6 +334,10 @@ def plotKrillDistributions():
     logger.info("Plotting krill data distributions...")
 
     try:
+        # Import necessary libraries
+        import numpy as np
+        from matplotlib.colors import LinearSegmentedColormap
+        
         # Load the raw and fused data
         raw_krill = pd.read_csv("input/raw_data/krillbase.csv", encoding='unicode_escape', low_memory=False)
         fused_krill = pd.read_csv("input/fusedData.csv")
@@ -339,8 +345,10 @@ def plotKrillDistributions():
 
         # Create a figure with subplots - now with only 2x2 grid and tighter spacing
         plt.rcParams.update({'font.size': 16})  # Increased base font size
-        fig = plt.figure(figsize=(18, 14))  # Slightly smaller figure size for tighter fit
-        gs = GridSpec(2, 2, figure=fig, hspace=0.3, wspace=0.25)  # Reduced spacing between subplots
+        fig = plt.figure(figsize=(20, 16))  # Larger figure size
+        
+        # Create grid with uneven column widths to make the map larger
+        gs = GridSpec(2, 2, figure=fig, hspace=0.3, wspace=0.3, width_ratios=[1, 1.2])  # Make right column wider for the map
 
         # Extract standardized krill values from raw data
         std_krill = raw_krill['STANDARDISED_KRILL_UNDER_1M2'].dropna()
@@ -424,7 +432,6 @@ def plotKrillDistributions():
         ax2.set_xticks(bar_positions)
         ax2.set_xticklabels(['Step 1:\nPresence/Absence', 'Step 2:\nAbundance'], fontsize=16)
         ax2.set_ylabel('Number of Samples', fontsize=20)
-        ax2.legend(loc='upper right', fontsize=16)
         ax2.grid(True, alpha=0.3, linestyle='--', axis='y')
         ax2.tick_params(axis='both', which='major', labelsize=16)
 
@@ -474,9 +481,9 @@ def plotKrillDistributions():
             Line2D([0], [0], color='#4393c3', lw=0, marker='s', markersize=12),
             Line2D([0], [0], color='#b2182b', lw=3, marker='o', markersize=8)
         ]
-        ax3.legend(custom_lines, ['Sample Count', 'Presence Ratio'], loc='upper left', fontsize=16)
+        #ax3.legend(custom_lines, ['Sample Count', 'Presence Ratio'], loc='upper left', fontsize=16)
 
-        # 4. Spatial distribution (bottom right) - with specific bounds
+        # 4. Spatial distribution (bottom right) - with specific bounds and grid cells
         try:
             import cartopy.crs as ccrs
             import cartopy.feature as cfeature
@@ -495,54 +502,149 @@ def plotKrillDistributions():
             gl.right_labels = False
             ax4.add_feature(cfeature.LAND, facecolor='lightgray')
             
-            # Plot points colored by presence/absence
-            presence = raw_krill['STANDARDISED_KRILL_UNDER_1M2'] > 0
+            # Create grid for presence ratio calculation
+            # Define grid resolution (in degrees)
+            grid_res = 2.0  # 2-degree grid cells
             
-            # Plot absence points first (smaller, blue)
-            scatter1 = ax4.scatter(
-                raw_krill.loc[~presence, 'LONGITUDE'],
-                raw_krill.loc[~presence, 'LATITUDE'],
-                c='#4575b4', s=15, alpha=0.5, transform=ccrs.PlateCarree(),
-                label='Absence'
+            # Create grid
+            lon_grid = np.arange(lonBounds[0], lonBounds[1] + grid_res, grid_res)
+            lat_grid = np.arange(latBounds[0], latBounds[1] + grid_res, grid_res)
+            
+            # Initialize arrays to store presence counts and total counts
+            presence_counts = np.zeros((len(lat_grid)-1, len(lon_grid)-1))
+            total_counts = np.zeros((len(lat_grid)-1, len(lon_grid)-1))
+            
+            # Calculate presence ratio for each grid cell
+            for i in range(len(lat_grid)-1):
+                for j in range(len(lon_grid)-1):
+                    # Find points in this grid cell
+                    mask = ((raw_krill['LONGITUDE'] >= lon_grid[j]) & 
+                            (raw_krill['LONGITUDE'] < lon_grid[j+1]) & 
+                            (raw_krill['LATITUDE'] >= lat_grid[i]) & 
+                            (raw_krill['LATITUDE'] < lat_grid[i+1]))
+                    
+                    # Count total points and presence points in this cell
+                    points_in_cell = mask.sum()
+                    if points_in_cell > 0:
+                        total_counts[i, j] = points_in_cell
+                        presence_counts[i, j] = (raw_krill.loc[mask, 'STANDARDISED_KRILL_UNDER_1M2'] > 0).sum()
+            
+            # Calculate presence ratio (avoid division by zero)
+            with np.errstate(divide='ignore', invalid='ignore'):
+                presence_ratio = np.where(total_counts > 0, presence_counts / total_counts, np.nan)
+            
+            # Create a custom colormap from blue to red
+            colors = ['#4575b4', '#91bfdb', '#e0f3f8', '#fee090', '#fc8d59', '#d73027']
+            cmap = LinearSegmentedColormap.from_list('presence_ratio', colors)
+            
+            # Plot the colormesh
+            # Convert grid edges to centers for pcolormesh
+            lon_centers = lon_grid[:-1] + grid_res/2
+            lat_centers = lat_grid[:-1] + grid_res/2
+            
+            # Create meshgrid for pcolormesh
+            lon_mesh, lat_mesh = np.meshgrid(lon_centers, lat_centers)
+            
+            # Plot the colormesh
+            mesh = ax4.pcolormesh(
+                lon_grid, lat_grid, presence_ratio, 
+                transform=ccrs.PlateCarree(),
+                cmap=plt.get_cmap('YlOrRd'), 
+                vmin=0, vmax=1,
+                shading='flat'
             )
             
-            # Plot presence points on top (larger, red)
-            scatter2 = ax4.scatter(
-                raw_krill.loc[presence, 'LONGITUDE'],
-                raw_krill.loc[presence, 'LATITUDE'],
-                c='#b2182b', s=25, alpha=0.7, transform=ccrs.PlateCarree(),
-                label='Presence'
-            )
+            # Add colorbar
+            cbar = plt.colorbar(mesh, ax=ax4, orientation='vertical', pad=0.02, shrink=0.8)
+            cbar.set_label('Presence Ratio', fontsize=18)
+            cbar.ax.tick_params(labelsize=14)
             
-            # Add legend
-            ax4.legend(loc='lower left', bbox_to_anchor=(0.1, 0.1), fontsize=16)
+            # Add a scatter plot showing sample density (size of points represents number of samples)
+            # Only show cells with data
+            valid_cells = ~np.isnan(presence_ratio)
+            if np.any(valid_cells):
+                # Scale the sizes based on log of count to prevent extremely large points
+                sizes = np.log1p(total_counts[valid_cells]) * 30
+                scatter = ax4.scatter(
+                    lon_mesh[valid_cells], 
+                    lat_mesh[valid_cells],
+                    s=sizes,
+                    c='black', 
+                    alpha=0.3,
+                    transform=ccrs.PlateCarree(),
+                    edgecolor='white',
+                    linewidth=0.5
+                )
+                
+                # Add legend for sample count
+                from matplotlib.lines import Line2D
+                handles = [
+                    Line2D([0], [0], marker='o', color='w', markerfacecolor='black', alpha=0.3,
+                           markersize=8, label='10 samples'),
+                    Line2D([0], [0], marker='o', color='w', markerfacecolor='black', alpha=0.3,
+                           markersize=12, label='100 samples'),
+                    Line2D([0], [0], marker='o', color='w', markerfacecolor='black', alpha=0.3,
+                           markersize=16, label='1000 samples')
+                ]
+                ax4.legend(handles=handles, loc='lower left', fontsize=14, title='Sample Count', title_fontsize=16)
             
         except ImportError:
-            # If cartopy is not available, create a simple scatter plot instead
-            logger.warning("Cartopy not available, using simple scatter plot for spatial distribution")
+            # If cartopy is not available, create a simple heatmap instead
+            logger.warning("Cartopy not available, using simple heatmap for spatial distribution")
             ax4 = fig.add_subplot(gs[1, 1])
-            
-            presence = raw_krill['STANDARDISED_KRILL_UNDER_1M2'] > 0
             
             # Use the specified bounds
             lonBounds = [-70, -31]
             latBounds = [-73, -50]
             
-            # Plot absence points first (smaller, blue)
-            ax4.scatter(
-                raw_krill.loc[~presence, 'LONGITUDE'],
-                raw_krill.loc[~presence, 'LATITUDE'],
-                c='#4575b4', s=15, alpha=0.5,
-                label='Absence'
+            # Create grid for presence ratio calculation
+            # Define grid resolution (in degrees)
+            grid_res = 2.0  # 2-degree grid cells
+            
+            # Create grid
+            lon_grid = np.arange(lonBounds[0], lonBounds[1] + grid_res, grid_res)
+            lat_grid = np.arange(latBounds[0], latBounds[1] + grid_res, grid_res)
+            
+            # Initialize arrays to store presence counts and total counts
+            presence_counts = np.zeros((len(lat_grid)-1, len(lon_grid)-1))
+            total_counts = np.zeros((len(lat_grid)-1, len(lon_grid)-1))
+            
+            # Calculate presence ratio for each grid cell
+            for i in range(len(lat_grid)-1):
+                for j in range(len(lon_grid)-1):
+                    # Find points in this grid cell
+                    mask = ((raw_krill['LONGITUDE'] >= lon_grid[j]) & 
+                            (raw_krill['LONGITUDE'] < lon_grid[j+1]) & 
+                            (raw_krill['LATITUDE'] >= lat_grid[i]) & 
+                            (raw_krill['LATITUDE'] < lat_grid[i+1]))
+                    
+                    # Count total points and presence points in this cell
+                    points_in_cell = mask.sum()
+                    if points_in_cell > 0:
+                        total_counts[i, j] = points_in_cell
+                        presence_counts[i, j] = (raw_krill.loc[mask, 'STANDARDISED_KRILL_UNDER_1M2'] > 0).sum()
+            
+            # Calculate presence ratio (avoid division by zero)
+            with np.errstate(divide='ignore', invalid='ignore'):
+                presence_ratio = np.where(total_counts > 0, presence_counts / total_counts, np.nan)
+            
+            # Create a custom colormap from blue to red
+            #colors = ['#4575b4', '#91bfdb', '#e0f3f8', '#fee090', '#fc8d59', '#d73027']
+            #cmap = LinearSegmentedColormap.from_list('presence_ratio', colors)
+            #cmap = plt.get_cmap('plasma')
+            
+            # Plot the heatmap
+            mesh = ax4.pcolormesh(
+                lon_grid, lat_grid, presence_ratio, 
+                cmap=plt.get_cmap('plasma'), 
+                vmin=0, vmax=1,
+                shading='flat'
             )
             
-            # Plot presence points on top (larger, red)
-            ax4.scatter(
-                raw_krill.loc[presence, 'LONGITUDE'],
-                raw_krill.loc[presence, 'LATITUDE'],
-                c='#b2182b', s=25, alpha=0.7,
-                label='Presence'
-            )
+            # Add colorbar
+            cbar = plt.colorbar(mesh, ax=ax4, orientation='vertical', pad=0.02, shrink=0.8)
+            cbar.set_label('Presence Ratio', fontsize=18)
+            cbar.ax.tick_params(labelsize=14)
             
             # Set limits to focus on regions of interest
             ax4.set_xlim(lonBounds[0], lonBounds[1])
@@ -550,10 +652,9 @@ def plotKrillDistributions():
             
             ax4.set_xlabel('Longitude', fontsize=20)
             ax4.set_ylabel('Latitude', fontsize=20)
-            ax4.legend(fontsize=16)
             ax4.grid(True, alpha=0.3)
             ax4.tick_params(axis='both', which='major', labelsize=16)
-
+            
         # Apply tight layout to make the figure more compact
         plt.tight_layout()
         
