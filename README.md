@@ -51,6 +51,24 @@ fuseData
 ```
 where files are saved to `input/fusedData.csv`.
 
+### Train Models
+```bash
+trainXG
+```
+where models are saved to `output/models`.
+
+### Plotting
+For plotting environment variables & initial preprocessed data, we can use the `plotEnv` command with a flag for different figure options in numeric format:
+```bash
+plotEnv --figure <figureKey>
+```
+for example `plotEnv --figure fig1`, where plots are saved to `output/figures`.
+
+Similarly, for plotting predictions:
+```bash
+plotPredict --figure <figureKey>
+```
+
 
 
 
