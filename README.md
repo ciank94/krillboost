@@ -4,6 +4,8 @@ SDM predicting krill abundance using XGBoost
 ## Navigation
 - [Installation](#installation)
 - [Preprocess Data](#preprocess-data)
+- [Train Models](#train-models)
+- [Plotting](#plotting)
 
 ## Installation
 Install from source: in development mode:
