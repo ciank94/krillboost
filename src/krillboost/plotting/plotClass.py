@@ -37,9 +37,9 @@ def plotQQ():
         krillData = krillData.drop(columns=unnamed_cols)
     
     # Separate features and targets
-    X = krillData.drop(columns=['KRILL_PRESENCE', 'KRILL_LOG10'])
+    X = krillData.drop(columns=['KRILL_PRESENCE', 'KRILL_LOG10', 'KRILL_SQRT', 'KRILL_LOGN'])
     y_presence = krillData['KRILL_PRESENCE']
-    y_abundance = krillData['KRILL_LOG10']
+    y_abundance = krillData['KRILL_SQRT']
     
     # Feature scaling for better model performance
     X = (X - X.mean()) / X.std()

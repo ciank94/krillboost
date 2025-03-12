@@ -5,6 +5,8 @@ import pandas as pd
 import os
 import argparse
 from scipy.interpolate import RegularGridInterpolator
+from scipy import stats
+from sklearn.preprocessing import PowerTransformer, QuantileTransformer
 
 def main():
     DataFusion()
@@ -47,10 +49,20 @@ class DataFusion:
         self.krillDataSubset['KRILL_PRESENCE'] = (self.krillDataSubset['STANDARDISED_KRILL_UNDER_1M2'] > 0).astype(int)
         
         # Create log10 transformed column for values above 0
-        self.krillDataSubset['KRILL_LOG10'] = self.krillDataSubset['STANDARDISED_KRILL_UNDER_1M2'].apply(lambda x: x if x <= 0 else np.log10(x))
+        self.krillDataSubset['KRILL_LOG10'] = self.krillDataSubset['STANDARDISED_KRILL_UNDER_1M2'].apply(lambda x: np.nan if x <= 0 else np.log10(x))
         
+        #SQRT transformation
+        self.krillDataSubset['KRILL_SQRT'] = self.krillDataSubset['STANDARDISED_KRILL_UNDER_1M2'].apply(lambda x: np.nan if x <= 0 else np.sqrt(x))
+
+        #natural log transformation
+        self.krillDataSubset['KRILL_LOGN'] = self.krillDataSubset['STANDARDISED_KRILL_UNDER_1M2'].apply(lambda x: np.nan if x <= 0 else np.log1p(x))
+      
+        # quantile transformer (stabilize variance):
+        quantile_transformer = QuantileTransformer(output_distribution='normal', random_state = 42)
+        self.krillDataSubset['KRILL_QUAN'] = self.krillDataSubset['STANDAR']
+
         # Drop NaN values
-        self.krillDataSubset.dropna(inplace=True)
+        #self.krillDataSubset.dropna(inplace=True)
         
         # Drop the original column
         self.krillDataSubset.drop(columns=['STANDARDISED_KRILL_UNDER_1M2'], inplace=True)

@@ -44,9 +44,9 @@ class KrillXGBoost:
 
     def train_models(self):
         # Separate features and targets
-        X = self.data.drop(columns=['KRILL_PRESENCE', 'KRILL_LOG10'])
+        X = self.data.drop(columns=['KRILL_PRESENCE', 'KRILL_LOG10', 'KRILL_SQRT', 'KRILL_LOGN'])
         y_presence = self.data['KRILL_PRESENCE']
-        y_abundance = self.data['KRILL_LOG10']
+        y_abundance = self.data['KRILL_SQRT']
         
         # Feature scaling for better model performance
         self.logger.info("Applying feature scaling")
@@ -81,7 +81,7 @@ class KrillXGBoost:
         
         # Make predictions on test set
         self.evaluate_models(X_test_presence, y_presence_test, X_test_abundance, y_abundance_test)
-        breakpoint()
+    
 
     def train_presence_model(self, X_train, X_test, y_train, y_test):
         self.logger.info("Training presence classification model...")
@@ -118,7 +118,8 @@ class KrillXGBoost:
         self.logger.info(f"Presence Model Accuracy: {accuracy:.4f}, AUC: {auc:.4f}")
         
         # Save model
-        self.presence_model.save_model(os.makedirs("output/models", exist_ok=True) + "/presence_model.json")
+        os.makedirs("output/models", exist_ok=True)
+        self.presence_model.save_model("output/models/presence_model.json")
         self.logger.info("Presence model saved to output/models/presence_model.json")
 
     def train_abundance_model(self, X_train, X_test, y_train, y_test):
@@ -131,7 +132,7 @@ class KrillXGBoost:
         
         # Set parameters for regression
         params_regression = {
-            'objective': 'reg:squarederror',
+            'objective': 'count:poisson',
             'learning_rate': 0.1,
             'max_depth': 5,
             'alpha': 10,
@@ -156,7 +157,8 @@ class KrillXGBoost:
         self.logger.info(f"Abundance Model MSE: {mse:.4f}, RMSE: {rmse:.4f}")
         
         # Save model
-        self.abundance_model.save_model(os.makedirs("output/models", exist_ok=True) + "/abundance_model.json")
+        os.makedirs("output/models", exist_ok=True)
+        self.abundance_model.save_model("output/models/abundance_model.json")
         self.logger.info("Abundance model saved to output/models/abundance_model.json")
 
     def evaluate_models(self, X_test_presence, y_presence_test, X_test_abundance, y_abundance_test):
