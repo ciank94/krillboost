@@ -11,17 +11,22 @@ from matplotlib.colors import LinearSegmentedColormap
 import cartopy.crs as ccrs
 import cartopy.feature as cfeature
 import xarray as xr
+from scipy.stats import gaussian_kde, norm
+from sklearn.metrics import mean_squared_error
+from scipy import interpolate
 logging.basicConfig(level=logging.INFO)
 
 def plotQQ():
     """
-    Create a Q-Q plot comparing conditional abundance predictions (presence * abundance) 
-    vs. observations, with adjustments to improve the relationship.
+    Create a scatter plot comparing predicted abundance vs. observed abundance for krill.
     
-    The plot includes a 1:1 reference line to evaluate model performance.
+    The plot includes a 1:1 reference line, density-based coloring, and performance metrics (R² and RMSE).
+    Similar to the plot_performance method in krillPredict.py.
+    
+    Only includes abundance values within the range of -2.0 to 2.0, matching the training range.
     """
     logger = logging.getLogger(__name__)
-    logger.info('Plotting Q-Q plot for conditional abundance predictions...')
+    logger.info('Plotting predicted vs. observed abundance...')
     
     # Load models
     presence_model_path = "output/models/presence_model.json"
@@ -37,9 +42,9 @@ def plotQQ():
         krillData = krillData.drop(columns=unnamed_cols)
     
     # Separate features and targets
-    X = krillData.drop(columns=['KRILL_PRESENCE', 'KRILL_LOG10', 'KRILL_SQRT', 'KRILL_LOGN'])
+    X = krillData.drop(columns=['KRILL_PRESENCE', 'KRILL_LOG10', 'KRILL_SQRT', 'KRILL_LOGN', 'KRILL_QUAN', 'KRILL_ORIGINAL'])
     y_presence = krillData['KRILL_PRESENCE']
-    y_abundance = krillData['KRILL_SQRT']
+    y_abundance = krillData['KRILL_ORIGINAL']
     
     # Feature scaling for better model performance
     X = (X - X.mean()) / X.std()
@@ -54,59 +59,95 @@ def plotQQ():
     presence_pred_prob = pmod.predict_proba(X)[:, 1]  # Use probability instead of binary prediction
     abundance_pred = amod.predict(X)
     
-    # Create conditional predictions (presence_prob * abundance)
-    # This creates a smoother transition than binary presence * abundance
-    conditional_pred = presence_pred_prob * abundance_pred
-    
-    # Create figure
-    plt.figure(figsize=(8, 8))
-    
     # Filter to only include observations where krill is present
     # This focuses on the samples where we actually have abundance data
     present_mask = y_presence == 1
     obs_present = y_abundance[present_mask]
-    cond_pred_present = conditional_pred[present_mask]
+    abundance_pred_present = abundance_pred[present_mask]
     
-    # Calculate quantiles
-    quantiles = np.linspace(0, 1, 100)  # Deciles  # 101 points from 0 to 100
-    obs_quantiles = np.quantile(obs_present, quantiles)
-    pred_quantiles = np.quantile(cond_pred_present, quantiles)
+    # Filter to only include abundance values within -0.5 to 20.0 range
+    # This matches the range used for training the abundance model
+    logger.info("Filtering to focus on abundance values within -0.5 to 20.0 range")
+    total_samples = len(obs_present)
+    in_range_mask = (obs_present >= np.percentile(obs_present,20)) & (obs_present <= np.percentile(obs_present,80))
+    in_range_count = in_range_mask.sum()
+    out_range_count = total_samples - in_range_count
+    logger.info(f"Total samples with krill present: {total_samples}")
+    logger.info(f"Samples within range [{np.percentile(obs_present,20):.3f}, {np.percentile(obs_present,80):.3f}]: {in_range_count} ({in_range_count/total_samples*100:.2f}%)")
+    logger.info(f"Samples outside range: {out_range_count} ({out_range_count/total_samples*100:.2f}%)")
     
-    # Plot quantiles with larger markers and improved styling
-    plt.plot(obs_quantiles, pred_quantiles, 'o', 
-             color='#1f77b4', alpha=0.8, markersize=6, 
-             label='Conditional Abundance')
-
-    # Add 1:1 reference line
-    min_val = min(obs_quantiles.min(), pred_quantiles.min())
-    max_val = max(obs_quantiles.max(), pred_quantiles.max())
-    plt.plot([min_val, max_val], [min_val, max_val], 'r--', linewidth=1.5, label='1:1 Line')
+    # Apply the range filter
+    obs_filtered = obs_present[in_range_mask]
+    pred_filtered = abundance_pred_present[in_range_mask]
+    
+    # Log the original and filtered ranges
+    logger.info(f"Original abundance range: [{obs_present.min():.3f}, {obs_present.max():.3f}]")
+    logger.info(f"Filtered abundance range: [{obs_filtered.min():.3f}, {obs_filtered.max():.3f}]")
+    logger.info(f"Filtered prediction range: [{pred_filtered.min():.3f}, {pred_filtered.max():.3f}]")
+    
+    # Convert to numpy arrays
+    y_true_np = obs_filtered.to_numpy()
+    y_pred_np = pred_filtered
+    
+    # Log data statistics
+    logger.info(f"Data statistics for filtered data:")
+    logger.info(f"  Number of points: {len(y_true_np)}")
+    
+    # Calculate performance metrics
+    r2 = np.corrcoef(y_true_np, y_pred_np)[0,1]**2
+    rmse = np.sqrt(mean_squared_error(y_true_np, y_pred_np))
+    
+    logger.info(f"Model Performance Metrics (filtered data):")
+    logger.info(f"  R²: {r2:.3f}")
+    logger.info(f"  RMSE: {rmse:.3f}")
+    
+    # Create figure
+    plt.figure(figsize=(10, 8))
+    
+    # Calculate point density for coloring
+    xy = np.vstack([y_true_np, y_pred_np])
+    z = gaussian_kde(xy)(xy)
+    
+    # Sort points by density for better visualization
+    idx = z.argsort()
+    x, y, z = y_true_np[idx], y_pred_np[idx], z[idx]
+    
+    # Create scatter plot colored by density
+    scatter = plt.scatter(x, y, c=z, s=50, alpha=0.5, cmap='inferno')
+    plt.colorbar(scatter, label='Point density')
+    
+    # Add perfect prediction line
+    min_val = min(min(y_true_np), min(y_pred_np))
+    max_val = max(max(y_true_np), max(y_pred_np))
+    
+    # Plot 1:1 line and add empty line for stats
+    plt.plot([min_val, max_val], [min_val, max_val], 'r--', label='1:1')
+    plt.plot([], [], ' ', label=f'R² = {r2:.3f}\nRMSE = {rmse:.3f}')
     
     # Add labels and title
-    plt.xlabel('Observed Log10 Abundance (Present Only)', fontsize=14)
-    plt.ylabel('Predicted Conditional Abundance', fontsize=14)
-    plt.title('Calibrated Two-Step Model Q-Q Plot', fontsize=16)
-    plt.grid(True, alpha=0.3)
+    plt.xlabel('Observed Log10 Abundance (Range: -2.0 to 2.0)', fontsize=14)
+    plt.ylabel('Predicted Abundance', fontsize=14)
+    plt.title('Predicted vs Observed Krill Abundance (Filtered Range)', fontsize=16)
     plt.legend(fontsize=12)
     
-    # Make the plot square to better visualize the 1:1 relationship
-    plt.axis('square')
+    # Add grid
+    plt.grid(True, alpha=0.3)
     
-    # Add R² value to the plot
-    # from scipy import stats
-    # slope, intercept, r_value, p_value, std_err = stats.linregress(obs_quantiles, pred_quantiles)
-    # r_squared = r_value**2
-    # plt.text(0.05, 0.95, f'R² = {r_squared:.3f}', transform=plt.gca().transAxes, 
-    #          fontsize=14, verticalalignment='top', bbox=dict(boxstyle='round', facecolor='white', alpha=0.8))
+    # Equal aspect ratio
+    plt.axis('equal')
+    
+    # Set axis limits to focus on the filtered range
+    plt.xlim(np.percentile(obs_present,20), np.percentile(obs_present,80))
+    plt.ylim(np.percentile(obs_present,20), np.percentile(obs_present,80))
     
     # Adjust layout
     plt.tight_layout()
     
     # Save figure
     os.makedirs('output/figures', exist_ok=True)
-    plt_path = 'output/figures/conditionalQQ.png'
+    plt_path = 'output/figures/abundance_performance_filtered.png'
     plt.savefig(plt_path, dpi=300, bbox_inches='tight')
-    logger.info(f"Saved conditional Q-Q plot to: {plt_path}")
+    logger.info(f"Saved filtered abundance performance plot to: {plt_path}")
     
     # Close the figure to free memory
     plt.close()
@@ -659,7 +700,7 @@ def main():
     parser.add_argument('--figure', type=str, 
                         choices=['fig1', 'fig2', 'fig3', 'fig4', 'fig5', 'fig6', 'fig7', 'all'], 
                         default='all', help='Select which figure to plot: \n'
-                                           'fig1: Q-Q plot for conditional abundance\n'
+                                           'fig1: Predicted vs observed abundance\n'
                                            'fig2: Confusion matrix\n'
                                            'fig3: ROC curve\n'
                                            'fig4: Precision-recall curve\n'

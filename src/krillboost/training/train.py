@@ -4,21 +4,24 @@ import xgboost as xgb
 import argparse
 import logging
 import os
-from sklearn.model_selection import train_test_split
+from sklearn.model_selection import train_test_split, RandomizedSearchCV
 from sklearn.metrics import mean_squared_error, accuracy_score, roc_auc_score
+from scipy import stats
 
 def main():
     parser = argparse.ArgumentParser(description='Train XGBoost models for krill presence and abundance.')
+    parser.add_argument('--search', type=bool, default=False, help='Enable hyperparameter search', choices=[True, False])
     args = parser.parse_args()
-    krill_model = KrillXGBoost()
+    krill_model = KrillXGBoost(search=args.search)
     krill_model.load_data()
     krill_model.train_models()
 
 class KrillXGBoost:
-    def __init__(self):
+    def __init__(self, search):
         self.data = None
         self.presence_model = None
         self.abundance_model = None
+        self.search = search
         logging.basicConfig(level=logging.INFO)
         self.logger = logging.getLogger(self.__class__.__name__)
         
@@ -44,9 +47,9 @@ class KrillXGBoost:
 
     def train_models(self):
         # Separate features and targets
-        X = self.data.drop(columns=['KRILL_PRESENCE', 'KRILL_LOG10', 'KRILL_SQRT', 'KRILL_LOGN'])
+        X = self.data.drop(columns=['KRILL_PRESENCE', 'KRILL_LOG10', 'KRILL_SQRT', 'KRILL_LOGN', 'KRILL_QUAN', 'KRILL_ORIGINAL'])
         y_presence = self.data['KRILL_PRESENCE']
-        y_abundance = self.data['KRILL_SQRT']
+        y_abundance = self.data['KRILL_ORIGINAL']
         
         # Feature scaling for better model performance
         self.logger.info("Applying feature scaling")
@@ -62,12 +65,32 @@ class KrillXGBoost:
         X_abundance = X[presence_mask]
         y_abundance = y_abundance[presence_mask]
         
-        self.logger.info(f"Full dataset shape: {X.shape}")
-        self.logger.info(f"Abundance dataset shape (only where krill is present): {X_abundance.shape}")
+        # Focus on abundance values within -2 to +2.5 range
+        self.logger.info("Filtering abundance data to focus on values within -2 to +2.5 range")
         
-        # Split data for abundance model
+        # Calculate the distribution of abundance values
+        total_samples = len(y_abundance)
+        in_range_mask = (y_abundance >= np.percentile(y_abundance,20)) & (y_abundance <= np.percentile(y_abundance,80))
+        in_range_count = in_range_mask.sum()
+        out_range_count = total_samples - in_range_count
+        
+        self.logger.info(f"Total abundance samples: {total_samples}")
+        self.logger.info(f"Samples within range [{np.percentile(y_abundance,20):.3f}, {np.percentile(y_abundance,80):.3f}]: {in_range_count} ({in_range_count/total_samples*100:.2f}%)")
+        self.logger.info(f"Samples outside range: {out_range_count} ({out_range_count/total_samples*100:.2f}%)")
+        
+        # Original range for reference
+        self.logger.info(f"Original abundance range: [{y_abundance.min():.3f}, {y_abundance.max():.3f}]")
+        
+        # Filter features and target to only include values within the specified range
+        X_abundance_filtered = X_abundance[in_range_mask]
+        y_abundance_filtered = y_abundance[in_range_mask]
+        
+        self.logger.info(f"Filtered abundance range: [{y_abundance_filtered.min():.3f}, {y_abundance_filtered.max():.3f}]")
+        self.logger.info(f"Filtered abundance dataset shape: {X_abundance_filtered.shape}")
+        
+        # Split data for abundance model using the filtered data
         X_train_abundance, X_test_abundance, y_abundance_train, y_abundance_test = train_test_split(
-            X_abundance, y_abundance, test_size=0.2, random_state=42
+            X_abundance_filtered, y_abundance_filtered, test_size=0.2, random_state=42
         )
         
         self.logger.info(f"Presence training data shape: {X_train_presence.shape}, Test data shape: {X_test_presence.shape}")
@@ -98,6 +121,7 @@ class KrillXGBoost:
             'alpha': 10,
             'eval_metric': 'auc'
         }
+       
         
         # Train model with early stopping
         self.presence_model = xgb.train(
@@ -132,12 +156,38 @@ class KrillXGBoost:
         
         # Set parameters for regression
         params_regression = {
-            'objective': 'count:poisson',
+            'objective': 'reg:squarederror',
+            'booster': 'gbtree',
+            'gamma': 0.5,
+            'eta': 0.3,
             'learning_rate': 0.1,
-            'max_depth': 5,
+            'subsample': 0.7,
+            'colsample_bytree': 0.7,
+            'max_depth': 2,
             'alpha': 10,
             'eval_metric': 'rmse'
         }
+        if self.search:
+            reg = xgb.XGBRegressor(nthread=-1)
+            # run randomized search
+            params = {
+                'n_estimators':[50, 100, 200, 500],
+                'min_child_weight':[4,5], 
+                'gamma':[i/10.0 for i in range(3,6)],  
+                'subsample':[i/10.0 for i in range(6,11)],
+                'colsample_bytree':[i/10.0 for i in range(6,11)], 
+                'max_depth': [2,3,4,6,7],
+                'objective': ['reg:squarederror'],
+                'booster': ['gbtree'],
+                'eval_metric': ['rmse'],
+                'eta': [i/10.0 for i in range(3,6)],
+            }
+            n_iter_search = 20
+            random_search = RandomizedSearchCV(reg, param_distributions=params,
+                                               n_iter=n_iter_search, cv=5, scoring='neg_mean_squared_error')
+            random_search.fit(X_train, y_train)
+            best_regressor = random_search.best_estimator_
+            params_regression = best_regressor.get_params()
         
         # Train model with early stopping
         self.abundance_model = xgb.train(

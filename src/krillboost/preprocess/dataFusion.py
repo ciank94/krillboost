@@ -58,8 +58,19 @@ class DataFusion:
         self.krillDataSubset['KRILL_LOGN'] = self.krillDataSubset['STANDARDISED_KRILL_UNDER_1M2'].apply(lambda x: np.nan if x <= 0 else np.log1p(x))
       
         # quantile transformer (stabilize variance):
-        quantile_transformer = QuantileTransformer(output_distribution='normal', random_state = 42)
-        self.krillDataSubset['KRILL_QUAN'] = self.krillDataSubset['STANDAR']
+        # Extract positive values for quantile transformation
+        positive_krill_values = self.krillDataSubset['STANDARDISED_KRILL_UNDER_1M2'][self.krillDataSubset['STANDARDISED_KRILL_UNDER_1M2'] > 0].values.reshape(-1, 1)
+        
+        # Apply quantile transformer only to positive values
+        quantile_transformer = QuantileTransformer(output_distribution='normal', random_state=42)
+        transformed_values = quantile_transformer.fit_transform(positive_krill_values).flatten()
+        
+        # Create a new column with transformed values
+        self.krillDataSubset['KRILL_QUAN'] = np.nan
+        self.krillDataSubset.loc[self.krillDataSubset['STANDARDISED_KRILL_UNDER_1M2'] > 0, 'KRILL_QUAN'] = transformed_values
+
+        # original values:
+        self.krillDataSubset['KRILL_ORIGINAL'] = self.krillDataSubset['STANDARDISED_KRILL_UNDER_1M2']
 
         # Drop NaN values
         #self.krillDataSubset.dropna(inplace=True)
