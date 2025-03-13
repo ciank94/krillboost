@@ -26,6 +26,7 @@ trainXG = "krillboost.training.train:main"
 plotEnv = "krillboost.plotting.plotEnv:main"
 plotClass = "krillboost.plotting.plotClass:main"
 plotReg = "krillboost.plotting.plotReg:main"
+sub680 = "krillboost.preprocess.sub680:main"
 
 [build-system]
 requires = ["poetry-core"]

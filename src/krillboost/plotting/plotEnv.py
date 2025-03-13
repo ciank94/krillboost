@@ -687,7 +687,6 @@ def main():
         plotVariableDistributions()
     elif args.figure == 'fig3':
         plotKrillDistributions()
-    
     return
 
 if __name__ == "__main__":

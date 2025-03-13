@@ -50,13 +50,13 @@
         "variables": ["o2"]
     },
     "test": {
-        "dataID": "cmems_mod_glo_bgc_my_0.25deg_P1D-m",
+        "dataID": "cmems_mod_glo_bgc_my_0.25deg_P1M-m",
         "configurePath": "C:/Users/ciank/.copernicusmarine/.copernicusmarine-credentials",
         "outputFilename": "input/raw_data/test.nc",
         "startDate": "2016-12-30T00:00:00",
         "endDate": "2016-12-31T00:00:00",
         "lonBounds": [-70, -31],
         "latBounds": [-73, -50],
-        "variables": ["o2"]
+        "variables": ["o2", "fe"]
     }
 }
