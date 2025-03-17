@@ -695,49 +695,244 @@ def plot_calibration_curve():
     
     return
 
+def plot_feature_importance():
+    """
+    Create a figure showing the most significant features for predicting krill presence.
+    
+    This function loads the trained presence model, extracts feature importance scores,
+    and creates a horizontal bar chart of the top features.
+    """
+    logger = logging.getLogger(__name__)
+    logger.info('Plotting feature importance for krill presence prediction...')
+    
+    # Load model
+    presence_model_path = "output/models/presence_model.json"
+    
+    # Load data to get feature names
+    krillData = pd.read_csv("input/fusedData.csv")
+    
+    # Remove unnamed columns if they exist
+    unnamed_cols = [col for col in krillData.columns if 'Unnamed' in col]
+    if unnamed_cols:
+        logger.info(f"Removing unnamed columns: {unnamed_cols}")
+        krillData = krillData.drop(columns=unnamed_cols)
+    
+    # Get feature names (excluding target columns)
+    feature_names = [col for col in krillData.columns if col not in ['KRILL_PRESENCE', 'KRILL_LOG10', 'KRILL_SQRT', 'KRILL_LOGN', 'KRILL_QUAN', 'KRILL_ORIGINAL']]
+    
+    # Load model
+    pmod = xgb.XGBClassifier()
+    pmod.load_model(presence_model_path)
+    
+    # Get feature importance directly using feature_importances_ attribute
+    try:
+        # Try using the feature_importances_ attribute first
+        importances = pmod.feature_importances_
+        importance_df = pd.DataFrame({
+            'Feature_Name': feature_names,
+            'Importance': importances
+        })
+    except (AttributeError, ValueError) as e:
+        logger.warning(f"Could not get feature_importances_ directly: {e}")
+        # Fall back to get_score method
+        importance_dict = pmod.get_booster().get_score(importance_type='gain')
+        
+        # Convert to DataFrame for easier handling
+        importance_df = pd.DataFrame({
+            'Feature': list(importance_dict.keys()),
+            'Importance': list(importance_dict.values())
+        })
+        
+        # Map feature indices (f0, f1, etc.) to actual feature names
+        feature_map = {f'f{i}': name for i, name in enumerate(feature_names)}
+        importance_df['Feature_Name'] = importance_df['Feature'].map(feature_map)
+    
+    # Sort by importance
+    importance_df = importance_df.sort_values('Importance', ascending=False)
+    
+    # Take top 10 features
+    top_features = importance_df.head(10).copy()
+    
+    # Normalize importance values for better visualization
+    total_importance = top_features['Importance'].sum()
+    top_features['Normalized_Importance'] = top_features['Importance'] / total_importance * 100
+    
+    # Create figure with adjusted size
+    plt.figure(figsize=(10, 6))
+    
+    # Truncate long feature names safely
+    short_names = []
+    for name in top_features['Feature_Name']:
+        if isinstance(name, str) and len(name) > 25:
+            short_names.append(name[:25] + '...')
+        else:
+            short_names.append(str(name))
+    
+    # Create horizontal bar chart
+    y_pos = np.arange(len(short_names))
+    bars = plt.barh(y_pos, top_features['Normalized_Importance'].values, color='teal')
+    
+    # Set y-tick labels to the shortened feature names
+    plt.yticks(y_pos, short_names)
+    
+    # Add values to the end of each bar (percentage format)
+    for i, value in enumerate(top_features['Normalized_Importance']):
+        plt.text(value + 0.5, i, f'{value:.1f}%', va='center')
+    
+    # Add labels and title
+    plt.xlabel('Relative Importance (%)', fontsize=12)
+    plt.ylabel('Feature', fontsize=12)
+    plt.title('Top 10 Features for Predicting Krill Presence', fontsize=14)
+    
+    # Add grid lines for better readability
+    plt.grid(axis='x', linestyle='--', alpha=0.7)
+    
+    # Ensure directory exists before saving
+    os.makedirs('output/figures', exist_ok=True)
+    
+    try:
+        # Save figure with adjusted parameters
+        plt_path = 'output/figures/presence_feature_importance.png'
+        plt.savefig(plt_path, dpi=300, bbox_inches='tight', pad_inches=0.5)
+        logger.info(f"Saved feature importance plot to: {plt_path}")
+    except Exception as e:
+        logger.error(f"Error saving figure: {e}")
+    
+    # Close the figure to free memory
+    plt.close()
+    
+    return
+
+def plot_presence_vs_abundance():
+    """
+    Create a Q-Q plot comparing the quantiles of continuous probability predictions from the presence model
+    against the quantiles of log10 abundance values.
+    
+    This visualization helps assess how well the distributions of presence probabilities and abundance values align,
+    which is useful for understanding the relationship between the two-step modeling approach:
+    1. Presence/absence prediction (probability)
+    2. Abundance prediction (for positive cases)
+    """
+    logger = logging.getLogger(__name__)
+    logger.info('Creating Q-Q plot of presence probability vs. log10 abundance...')
+    
+    # Load model
+    presence_model_path = "output/models/presence_model.json"
+    
+    # Load data
+    krillData = pd.read_csv("input/fusedData.csv")
+    
+    # Remove unnamed columns if they exist
+    unnamed_cols = [col for col in krillData.columns if 'Unnamed' in col]
+    if unnamed_cols:
+        logger.info(f"Removing unnamed columns: {unnamed_cols}")
+        krillData = krillData.drop(columns=unnamed_cols)
+    
+    # Separate features and targets
+    X = krillData.drop(columns=['KRILL_PRESENCE', 'KRILL_LOG10', 'KRILL_SQRT', 'KRILL_LOGN', 'KRILL_QUAN', 'KRILL_ORIGINAL'])
+    y_presence = krillData['KRILL_PRESENCE']
+    y_log10 = krillData['KRILL_LOG10']
+    
+    # Feature scaling for better model performance
+    X = (X - X.mean()) / X.std()
+    
+    # Load model
+    pmod = xgb.XGBClassifier()
+    pmod.load_model(presence_model_path)
+    
+    # Generate probability predictions
+    presence_prob = pmod.predict_proba(X)[:, 1]  # Probability of class 1 (presence)
+    
+    # Filter to only include observations where krill is present (for log10 values)
+    present_mask = y_presence == 1
+    log10_values = y_log10[present_mask]
+    prob_values_present = presence_prob[present_mask]
+    
+    # Create figure
+    plt.figure(figsize=(10, 8))
+    
+    # Calculate quantiles for both distributions
+    # We need to normalize the log10 values to be between 0 and 1 for fair comparison with probabilities
+    log10_min = log10_values.min()
+    log10_max = log10_values.max()
+    log10_normalized = (log10_values - log10_min) / (log10_max - log10_min)
+    
+    # Sort both arrays
+    log10_sorted = np.sort(log10_normalized)
+    prob_sorted = np.sort(prob_values_present)
+    
+    # Generate theoretical quantiles (using percentiles)
+    quantiles = np.linspace(0, 1, len(log10_sorted))
+    
+    # Create Q-Q plot
+    plt.scatter(log10_sorted, prob_sorted, alpha=0.6, color='teal', s=30)
+    
+    # Add reference line (y=x)
+    min_val = min(log10_sorted.min(), prob_sorted.min())
+    max_val = max(log10_sorted.max(), prob_sorted.max())
+    plt.plot([min_val, max_val], [min_val, max_val], 'r--', linewidth=2, label='Reference Line (y=x)')
+    
+    # Calculate correlation coefficient
+    corr = np.corrcoef(log10_sorted, prob_sorted)[0, 1]
+    logger.info(f"Correlation between quantiles: {corr:.3f}")
+    
+    # Add labels and title
+    plt.xlabel('Normalized Log10 Abundance Quantiles', fontsize=14)
+    plt.ylabel('Presence Probability Quantiles', fontsize=14)
+    plt.title('Q-Q Plot: Presence Probability vs. Log10 Abundance', fontsize=16)
+    
+    # Add correlation annotation
+    plt.annotate(f'Correlation: {corr:.3f}', 
+                 xy=(0.05, 0.95), 
+                 xycoords='axes fraction',
+                 bbox=dict(boxstyle="round,pad=0.3", fc="white", ec="gray", alpha=0.8),
+                 fontsize=12)
+    
+    # Add grid and legend
+    plt.grid(True, alpha=0.3)
+    plt.legend(loc='lower right')
+    
+    # Set equal aspect ratio for better visualization
+    plt.axis('equal')
+    
+    # Adjust layout
+    plt.tight_layout()
+    
+    # Save figure
+    os.makedirs('output/figures', exist_ok=True)
+    plt_path = 'output/figures/presence_probability_qq_plot.png'
+    plt.savefig(plt_path, dpi=300, bbox_inches='tight')
+    logger.info(f"Saved Q-Q plot to: {plt_path}")
+    
+    # Close the figure to free memory
+    plt.close()
+    
+    return
+
 def main():
-    parser = argparse.ArgumentParser(description='Plot predicted krill presence and abundance.')
-    parser.add_argument('--figure', type=str, 
-                        choices=['fig1', 'fig2', 'fig3', 'fig4', 'fig5', 'fig6', 'fig7', 'all'], 
-                        default='all', help='Select which figure to plot: \n'
-                                           'fig1: Predicted vs observed abundance\n'
-                                           'fig2: Confusion matrix\n'
-                                           'fig3: ROC curve\n'
-                                           'fig4: Precision-recall curve\n'
-                                           'fig5: Probability distribution\n'
-                                           'fig6: Calibration curve\n'
-                                           'fig7: Spatial predictions\n'
-                                           'all: Generate all plots (default)')
+    """Main function to run all plotting methods."""
+    parser = argparse.ArgumentParser(description='Generate plots for krill prediction models.')
+    parser.add_argument('plot', type=str, default='all', help='Plot to generate (all, qq, confusion, roc, pr, prob, spatial, calibration, feature_importance, presence_abundance)')
     args = parser.parse_args()
     
-    logger = logging.getLogger(__name__)
-    
-    # Plot the selected figure(s)
-    if args.figure == 'fig1' or args.figure == 'all':
+    if args.plot == 'all' or args.plot == 'qq':
         plotQQ()
-    
-    if args.figure == 'fig2' or args.figure == 'all':
+    if args.plot == 'all' or args.plot == 'confusion':
         plot_confusion_matrix()
-    
-    if args.figure == 'fig3' or args.figure == 'all':
+    if args.plot == 'all' or args.plot == 'roc':
         plot_roc_curve()
-    
-    if args.figure == 'fig4' or args.figure == 'all':
+    if args.plot == 'all' or args.plot == 'pr':
         plot_precision_recall_curve()
-    
-    if args.figure == 'fig5' or args.figure == 'all':
+    if args.plot == 'all' or args.plot == 'prob':
         plot_probability_distribution()
-    
-    if args.figure == 'fig6' or args.figure == 'all':
-        plot_calibration_curve()
-    
-    if args.figure == 'fig7' or args.figure == 'all':
+    if args.plot == 'all' or args.plot == 'spatial':
         plot_spatial_predictions()
-    
-    if args.figure == 'all':
-        logger.info("All plots generated successfully.")
-    else:
-        logger.info(f"Plot {args.figure} generated successfully.")
+    if args.plot == 'all' or args.plot == 'calibration':
+        plot_calibration_curve()
+    if args.plot == 'all' or args.plot == 'feature_importance':
+        plot_feature_importance()
+    if args.plot == 'all' or args.plot == 'presence_abundance':
+        plot_presence_vs_abundance()
     
     return
 
