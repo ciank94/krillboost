@@ -21,11 +21,13 @@ with open(os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.d
 def main():
     logging.basicConfig(level=logging.INFO)
     parser = argparse.ArgumentParser(description='Plot validation results')
-    parser.add_argument('plot', type=str, default='all', help='Plot to generate validation against real data')
+    parser.add_argument('plot', type=str, default='all', help='Plot to generate validation against real data (all, catch, response)')
     args = parser.parse_args()
 
     if args.plot == 'all' or args.plot == 'catch':
         plotCatch()
+    if args.plot == 'all' or args.plot == 'response':
+        plot_response_curves()
     return
 
 
@@ -208,6 +210,206 @@ def plotCatch():
     plt_path = f'output/figures/krill_presence_catch_{year}.png'
     plt.savefig(plt_path, dpi=300, bbox_inches='tight')
     logger.info(f"Saved krill presence and catch plot to: {plt_path}")
+    
+    # Close the figure to free memory
+    plt.close()
+    
+    return
+
+
+def plot_response_curves():
+    """
+    Create response curves for the top 10 features in the krill presence model.
+    
+    This function:
+    1. Loads the trained presence model
+    2. Identifies the top 10 features by importance
+    3. Generates response curves showing how each feature affects the predicted probability of krill presence
+    4. Creates a multi-panel figure with all response curves
+    
+    Each response curve shows how the predicted probability changes when varying one feature
+    while keeping all others at their actual distribution of values from random background points.
+    """
+    logger = logging.getLogger(__name__)
+    logger.info('Plotting response curves for top 10 features...')
+    
+    # Load model
+    presence_model_path = "output/models/presence_model.json"
+    
+    if not os.path.exists(presence_model_path):
+        logger.error(f"Model file not found: {presence_model_path}")
+        return
+    
+    # Load data
+    data_path = "input/fusedData.csv"
+    if not os.path.exists(data_path):
+        logger.error(f"Data file not found: {data_path}")
+        return
+        
+    krillData = pd.read_csv(data_path)
+    
+    # Remove unnamed columns if they exist
+    unnamed_cols = [col for col in krillData.columns if 'Unnamed' in col]
+    if unnamed_cols:
+        logger.info(f"Removing unnamed columns: {unnamed_cols}")
+        krillData = krillData.drop(columns=unnamed_cols)
+    
+    # Check for target columns
+    required_columns = ['KRILL_PRESENCE', 'KRILL_LOG10', 'KRILL_ORIGINAL']
+    missing_columns = [col for col in required_columns if col not in krillData.columns]
+    if missing_columns:
+        logger.error(f"Missing required columns: {missing_columns}")
+        return
+    
+    # Separate features and targets
+    target_columns = ['KRILL_PRESENCE', 'KRILL_LOG10', 'KRILL_SQRT', 'KRILL_LOGN', 'KRILL_QUAN', 'KRILL_ORIGINAL']
+    available_targets = [col for col in target_columns if col in krillData.columns]
+    
+    X = krillData.drop(columns=available_targets)
+    y_presence = krillData['KRILL_PRESENCE']
+    
+    # Get feature names
+    feature_names = X.columns.tolist()
+    
+    # Load model
+    try:
+        pmod = xgb.XGBClassifier()
+        pmod.load_model(presence_model_path)
+        logger.info("Model loaded successfully")
+    except Exception as e:
+        logger.error(f"Error loading model: {e}")
+        return
+    
+    # Get feature importance
+    try:
+        # Try using the feature_importances_ attribute first
+        importances = pmod.feature_importances_
+        importance_df = pd.DataFrame({
+            'Feature': feature_names,
+            'Importance': importances
+        })
+    except (AttributeError, ValueError) as e:
+        logger.warning(f"Could not get feature_importances_ directly: {e}")
+        # Fall back to get_score method
+        try:
+            importance_dict = pmod.get_booster().get_score(importance_type='gain')
+            
+            # Convert to DataFrame for easier handling
+            importance_df = pd.DataFrame({
+                'Feature': list(importance_dict.keys()),
+                'Importance': list(importance_dict.values())
+            })
+            
+            # Map feature indices (f0, f1, etc.) to actual feature names
+            feature_map = {f'f{i}': name for i, name in enumerate(feature_names)}
+            importance_df['Feature'] = importance_df['Feature'].map(feature_map)
+        except Exception as e:
+            logger.error(f"Error getting feature importance: {e}")
+            return
+    
+    # Sort by importance and get top 10
+    importance_df = importance_df.sort_values('Importance', ascending=False)
+    top_features = importance_df.head(10)['Feature'].tolist()
+    
+    logger.info(f"Top 10 features: {top_features}")
+    
+    # Feature scaling for better model performance
+    X_scaled = (X - X.mean()) / X.std()
+    
+    # Number of points to evaluate for each feature
+    n_points = 100
+    
+    # Number of background samples to use
+    n_background = 500  # Increased for better representation
+    
+    # Create figure with subplots
+    n_cols = 2
+    n_rows = (len(top_features) + n_cols - 1) // n_cols
+    fig, axes = plt.subplots(n_rows, n_cols, figsize=(16, 4 * n_rows))
+    axes = axes.flatten()
+    
+    # For each top feature, generate a response curve
+    for i, feature in enumerate(top_features):
+        logger.info(f"Generating response curve for {feature} ({i+1}/{len(top_features)})...")
+        
+        # Create range of values to evaluate for this feature
+        feature_min = X_scaled[feature].min()
+        feature_max = X_scaled[feature].max()
+        x_values = np.linspace(feature_min, feature_max, n_points)
+        
+        # Original scale values for x-axis
+        x_orig_scale = x_values * X[feature].std() + X[feature].mean()
+        
+        # Storage for predictions
+        all_predictions = []
+        
+        # For each x value, create multiple predictions with random background points
+        for x_val in x_values:
+            # Sample random background points
+            background_indices = np.random.choice(X_scaled.shape[0], n_background, replace=True)
+            background_samples = X_scaled.iloc[background_indices].copy()
+            
+            # Set the feature value to the current x value
+            background_samples[feature] = x_val
+            
+            # Make predictions
+            preds = pmod.predict_proba(background_samples)[:, 1]
+            all_predictions.append(preds)
+        
+        # Convert to numpy array for easier calculations
+        all_predictions = np.array(all_predictions)  # shape: (n_points, n_background)
+        
+        # Calculate mean and confidence intervals
+        mean_pred = np.mean(all_predictions, axis=1)
+        std_pred = np.std(all_predictions, axis=1)
+        lower_bound = mean_pred - 1.96 * std_pred  # 95% confidence interval
+        upper_bound = mean_pred + 1.96 * std_pred
+        
+        # Ensure bounds are within [0, 1]
+        lower_bound = np.maximum(0, lower_bound)
+        upper_bound = np.minimum(1, upper_bound)
+        
+        # Plot response curve
+        ax = axes[i]
+        ax.plot(x_orig_scale, mean_pred, 'b-', linewidth=2)
+        ax.fill_between(x_orig_scale, lower_bound, upper_bound, alpha=0.3, color='b')
+        
+        # Add horizontal line at 0.5 probability
+        ax.axhline(y=0.5, color='r', linestyle='--', alpha=0.7)
+        
+        # Add labels
+        ax.set_xlabel(feature, fontsize=12)
+        ax.set_ylabel('Probability of Presence', fontsize=12)
+        ax.set_title(f'Response Curve: {feature}', fontsize=14)
+        
+        # Add grid
+        ax.grid(True, alpha=0.3)
+        
+        # Set y-axis limits
+        ax.set_ylim(0, 1)
+        
+        # Add importance value as text
+        importance_value = importance_df[importance_df['Feature'] == feature]['Importance'].values[0]
+        importance_percent = 100 * importance_value / importance_df['Importance'].sum()
+        ax.text(0.05, 0.95, f'Importance: {importance_percent:.1f}%', 
+                transform=ax.transAxes, fontsize=10,
+                verticalalignment='top', bbox=dict(boxstyle='round', facecolor='white', alpha=0.8))
+    
+    # Remove any unused subplots
+    for i in range(len(top_features), len(axes)):
+        fig.delaxes(axes[i])
+    
+    # Add overall title
+    plt.suptitle('Response Curves for Top 10 Features (Krill Presence Model)', fontsize=16, y=1.02)
+    
+    # Adjust layout
+    plt.tight_layout()
+    
+    # Save figure
+    os.makedirs('output/figures', exist_ok=True)
+    plt_path = 'output/figures/response_curves.png'
+    plt.savefig(plt_path, dpi=300, bbox_inches='tight')
+    logger.info(f"Saved response curves plot to: {plt_path}")
     
     # Close the figure to free memory
     plt.close()
