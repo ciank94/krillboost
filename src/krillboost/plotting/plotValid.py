@@ -21,13 +21,15 @@ with open(os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.d
 def main():
     logging.basicConfig(level=logging.INFO)
     parser = argparse.ArgumentParser(description='Plot validation results')
-    parser.add_argument('plot', type=str, default='all', help='Plot to generate validation against real data (all, catch, response)')
+    parser.add_argument('plot', type=str, default='all', help='Plot to generate validation against real data (all, catch, response, multiyear)')
     args = parser.parse_args()
 
     if args.plot == 'all' or args.plot == 'catch':
         plotCatch()
     if args.plot == 'all' or args.plot == 'response':
         plot_response_curves()
+    if args.plot == 'all' or args.plot == 'multiyear':
+        plot_multiyear_predictions()
     return
 
 
@@ -116,11 +118,24 @@ def plotCatch():
     projection = ccrs.PlateCarree()
     ax = plt.axes(projection=projection)
     
-    # Define map bounds from the config
-    lonBounds = [MAP_PARAMS['map_lon_min'], MAP_PARAMS['map_lon_max']]
-    latBounds = [MAP_PARAMS['map_lat_min'], MAP_PARAMS['map_lat_max']]
+    # Load krill data
+    try:
+        krillData = pd.read_csv("input/fusedData.csv", encoding='latin1')
+        logger.info(f"Successfully loaded fusedData.csv with latin1 encoding")
+    except UnicodeDecodeError:
+        try:
+            krillData = pd.read_csv("input/fusedData.csv", encoding='cp1252')
+            logger.info(f"Successfully loaded fusedData.csv with cp1252 encoding")
+        except Exception as e:
+            logger.error(f"Failed to load krillbase.csv: {str(e)}")
+            return
     
-    # Set extent to focus on Antarctic Peninsula region using config values
+    # Define dynamic bounds from the data (like in plotClass.py)
+    lonBounds = [krillData['LONGITUDE'].min() - 1, krillData['LONGITUDE'].max() + 1]
+    latBounds = [krillData['LATITUDE'].min() - 1, krillData['LATITUDE'].max() + 1]
+    grid_res = 2.0  # 2-degree grid cells like in plotClass.py
+    
+    # Set extent to focus on Antarctic Peninsula region using dynamic bounds
     ax.set_extent(lonBounds + latBounds, crs=ccrs.PlateCarree())
     
     # Add coastlines and land features
@@ -410,6 +425,230 @@ def plot_response_curves():
     plt_path = 'output/figures/response_curves.png'
     plt.savefig(plt_path, dpi=300, bbox_inches='tight')
     logger.info(f"Saved response curves plot to: {plt_path}")
+    
+    # Close the figure to free memory
+    plt.close()
+    
+    return
+
+
+def plot_multiyear_predictions():
+    """
+    Create a multi-year plot of krill presence predictions for years 2011-2016.
+    
+    This function:
+    1. Processes environmental data for years 2011, 2012, 2013, 2014, 2015, and 2016
+    2. Makes predictions using the trained presence model for each year
+    3. Creates a 6-panel figure showing predicted probability values
+    4. Overlays krill presence (dots) and absence (x) points from the raw dataset for each year
+    """
+    logger = logging.getLogger(__name__)
+    logger.info('Creating multi-year krill presence predictions plot...')
+    
+    # Load presence model
+    presence_model_path = "output/models/presence_model.json"
+    
+    if not os.path.exists(presence_model_path):
+        logger.error(f"Model file not found: {presence_model_path}")
+        return
+    
+    # Load the model
+    try:
+        pmod = xgb.XGBClassifier()
+        pmod.load_model(presence_model_path)
+        logger.info("Model loaded successfully")
+    except Exception as e:
+        logger.error(f"Error loading model: {e}")
+        return
+    
+    # Load raw krill data for presence/absence points
+    krill_raw_data_path = "input/raw_data/krillbase.csv"
+    if not os.path.exists(krill_raw_data_path):
+        logger.error(f"Raw krill data file not found: {krill_raw_data_path}")
+        return
+    
+    try:
+        # Load the raw krill data which should have date information
+        # Try different encodings since there's an issue with UTF-8
+        try:
+            krill_raw_data = pd.read_csv(krill_raw_data_path, encoding='latin1')
+            logger.info("Loaded krillbase.csv with latin1 encoding")
+        except Exception as e1:
+            try:
+                krill_raw_data = pd.read_csv(krill_raw_data_path, encoding='cp1252')
+                logger.info("Loaded krillbase.csv with cp1252 encoding")
+            except Exception as e2:
+                logger.error(f"Failed to load krillbase.csv with multiple encodings: {e1}, {e2}")
+                return
+        
+        # Extract year from DATE column (format dd/mm/yyyy)
+        if 'DATE' in krill_raw_data.columns:
+            # Convert DATE to datetime and extract year
+            krill_raw_data['DATE'] = pd.to_datetime(krill_raw_data['DATE'], format='%d/%m/%Y', errors='coerce')
+            krill_raw_data['year'] = krill_raw_data['DATE'].dt.year
+            logger.info(f"Extracted year information from DATE column")
+            
+            # Remove rows with invalid dates
+            valid_date_mask = ~krill_raw_data['DATE'].isna()
+            krill_raw_data = krill_raw_data[valid_date_mask]
+            logger.info(f"Removed {sum(~valid_date_mask)} rows with invalid dates")
+        else:
+            logger.error("DATE column not found in krillbase.csv")
+            return
+        
+        # Ensure we have krill density information to determine presence/absence
+        if 'STANDARDISED_KRILL_UNDER_1M2' in krill_raw_data.columns:
+            # Based on the memory, values of -2.0 represent absence of krill (zeros)
+            krill_raw_data['KRILL_PRESENCE'] = (krill_raw_data['STANDARDISED_KRILL_UNDER_1M2'] > -2.0).astype(int)
+            logger.info("Created KRILL_PRESENCE from STANDARDISED_KRILL_UNDER_1M2")
+        else:
+            logger.error("STANDARDISED_KRILL_UNDER_1M2 column not found in krillbase.csv")
+            return
+        
+        logger.info(f"Loaded raw krill data with {len(krill_raw_data)} records")
+    except Exception as e:
+        logger.error(f"Error loading raw krill data: {e}")
+        return
+    
+    # Define years to process
+    years = [2011, 2012, 2013, 2014, 2015, 2016]
+    
+    # Set up figure with parameters matching envData.png
+    plt.rcParams.update({'font.size': 20})  # Set default font size to 20
+    fig = plt.figure(figsize=(14, 12))
+    
+    # Create a 3x2 grid for subplots
+    gs = fig.add_gridspec(3, 2, hspace=0.3, wspace=0.2)
+    axes = []
+    
+    # Create subplots with PlateCarree projection
+    for i in range(6):
+        row = i // 2
+        col = i % 2
+        ax = fig.add_subplot(gs[row, col], projection=ccrs.PlateCarree())
+        axes.append(ax)
+    
+    # Load krill data
+    try:
+        krillData = pd.read_csv("input/fusedData.csv", encoding='latin1')
+        logger.info(f"Successfully loaded fusedData.csv with latin1 encoding")
+    except UnicodeDecodeError:
+        try:
+            krillData = pd.read_csv("input/fusedData.csv", encoding='cp1252')
+            logger.info(f"Successfully loaded fusedData.csv with cp1252 encoding")
+        except Exception as e:
+            logger.error(f"Failed to load fusedData.csv: {str(e)}")
+            return
+    
+    # Define dynamic bounds from the data (like in plotClass.py)
+    lonBounds = [krillData['LONGITUDE'].min() - 1, krillData['LONGITUDE'].max() + 1]
+    latBounds = [krillData['LATITUDE'].min() - 1, krillData['LATITUDE'].max() + 1]
+    grid_res = 2.0  # 2-degree grid cells like in plotClass.py
+    
+    # Create a custom colormap for krill presence probability
+    cmap = plt.get_cmap('Reds')
+    
+    # Process each year
+    for i, year in enumerate(years):
+        logger.info(f"Processing year {year}...")
+        
+        # Define date range for this year (first 3 months)
+        start_date = datetime.datetime(year, 1, 1)
+        end_date = datetime.datetime(year, 3, 31)
+        
+        # Check if subset data exists, if not create it
+        if not os.path.exists(f"input/subset_years/sst_{start_date.year}.nc"):
+            logger.info(f"Subsetting features for {start_date.year}")
+            featureSubset(start_date, end_date)
+        
+        # Load features
+        krillDataset = loadFeatures(start_date, end_date)
+        logger.info(f"Loaded features for {start_date.year}")
+        
+        # Get coordinates from the dataset
+        lons = krillDataset['LONGITUDE'].unique()
+        lats = krillDataset['LATITUDE'].unique()
+        
+        # Create a grid of points for visualization
+        lon_grid, lat_grid = np.meshgrid(lons, lats)
+        
+        # Remove NaN values from the dataset
+        valid_mask = ~krillDataset.isna().any(axis=1)
+        valid_features = krillDataset[valid_mask]
+        
+        # Create DataFrame for prediction
+        X_pred = valid_features.copy()
+        
+        # Standardize features (using same approach as in training)
+        X_pred = (X_pred - X_pred.mean()) / X_pred.std()
+        
+        # Make predictions
+        logger.info(f"Predicting krill presence for {year}...")
+        presence_probs = pmod.predict_proba(X_pred)[:, 1]  # Probability of presence
+        
+        # Create a grid for plotting
+        presence_grid = np.full((len(lats), len(lons)), np.nan)
+        
+        # Map the predictions back to the grid
+        for j, (idx, row) in enumerate(valid_features.iterrows()):
+            lat_idx = np.where(lats == row['LATITUDE'])[0][0]
+            lon_idx = np.where(lons == row['LONGITUDE'])[0][0]
+            presence_grid[lat_idx, lon_idx] = presence_probs[j]
+        
+        # Get the current subplot
+        ax = axes[i]
+        
+        # Set extent to focus on Antarctic Peninsula region using dynamic bounds
+        ax.set_extent(lonBounds + latBounds, crs=ccrs.PlateCarree())
+        
+        # Add coastlines and land features
+        ax.add_feature(cfeature.LAND, facecolor='lightgrey', zorder=100)
+        ax.coastlines(linewidth=1.5, zorder=101)
+        
+        # Plot the prediction grid
+        im = ax.pcolormesh(
+            lon_grid, lat_grid, presence_grid, 
+            transform=ccrs.PlateCarree(),
+            cmap=cmap, 
+            vmin=0, vmax=0.8,
+            shading='auto',
+            zorder=1
+        )
+        
+        # Krill presence points plotting is turned off as requested
+        
+        # Add gridlines (simplified for subplots)
+        gl = ax.gridlines(draw_labels=True, linewidth=1, color='gray', alpha=0.5, linestyle='--')
+        gl.top_labels = False
+        gl.right_labels = False
+        gl.xlabel_style = {'size': 14}
+        gl.ylabel_style = {'size': 14}
+        
+        # Add title for this subplot - just the year
+        ax.set_title(f'{year}', fontsize=20)
+        
+        # Only add axis labels for edge subplots
+        if i >= 4:  # Bottom row
+            ax.set_xlabel('Longitude', fontsize=14)
+        if i % 2 == 0:  # Left column
+            ax.set_ylabel('Latitude', fontsize=14)
+    
+    # Add a colorbar that applies to all subplots
+    cbar_ax = fig.add_axes([0.92, 0.15, 0.02, 0.7])  # [left, bottom, width, height]
+    cbar = fig.colorbar(im, cax=cbar_ax)
+    cbar.set_label('Predicted Krill Presence Probability', fontsize=20)
+    cbar.ax.tick_params(labelsize=18)
+    
+    # No legend since we're not showing krill presence points
+    
+    # Add overall title
+    plt.suptitle('Predicted Krill Presence Probability (2011-2016)', fontsize=24, y=0.98)
+    
+    # Save figure with higher resolution
+    os.makedirs('output/figures', exist_ok=True)
+    plt_path = 'output/figures/multiyear_krill_predictions.png'
+    plt.savefig(plt_path, dpi=600, bbox_inches='tight')
+    logger.info(f"Saved high-resolution multi-year krill predictions plot to: {plt_path}")
     
     # Close the figure to free memory
     plt.close()

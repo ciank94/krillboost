@@ -1,11 +1,11 @@
 {
-  "lon_min": -65,
-  "lon_max": -53,
-  "lat_min": -66,
-  "lat_max": -58,
-  "grid_step": 0.5,
-  "map_lon_min": -67,
-  "map_lon_max": -51,
-  "map_lat_min": -68,
-  "map_lat_max": -56
+  "lon_min": -70.9853,
+  "lon_max": -30.146,
+  "lat_min": -69.2927,
+  "lat_max": -49.0041,
+  "grid_step": 0.1,
+  "map_lon_min": -70.9853,
+  "map_lon_max": -30.146,
+  "map_lat_min": -69.2927,
+  "map_lat_max": -49.0041
 }
