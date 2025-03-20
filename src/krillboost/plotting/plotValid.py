@@ -435,17 +435,17 @@ def plot_response_curves():
 def plot_multiyear_predictions():
     """
     Create a multi-year plot of krill presence predictions for years 2011-2016,
-    showing percentile areas for each year.
+    showing contours of prediction probabilities for each year.
     
     This function:
     1. Processes environmental data for years 2011, 2012, 2013, 2014, 2015, and 2016
     2. Makes predictions using the trained presence model for each year
-    3. Creates a 6-panel figure showing percentile areas for krill presence probability
-    4. Uses a segmented colormap to highlight different percentile ranges
+    3. Creates a 6-panel figure showing contours of krill presence probability
+    4. Uses a continuous colormap with every 10th quantile (0, 10, 20, ..., 90, 100)
     5. Includes bathymetry contours for better geographic context
     """
     logger = logging.getLogger(__name__)
-    logger.info('Creating multi-year krill presence predictions plot with percentiles...')
+    logger.info('Creating multi-year krill presence predictions plot with quantiles...')
     
     # Load presence model
     presence_model_path = "output/models/presence_model.json"
@@ -515,9 +515,8 @@ def plot_multiyear_predictions():
     # Define years to process
     years = [2011, 2012, 2013, 2014, 2015, 2016]
     
-    # Define percentile thresholds to visualize
-    # We'll use multiple percentiles to create segments
-    percentile_thresholds = [25, 50, 75, 90]
+    # Define quantile thresholds (every 10th percentile)
+    quantile_thresholds = [0, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100]
     
     # Set up figure with parameters matching envData.png
     plt.rcParams.update({'font.size': 20})  # Set default font size to 20
@@ -573,8 +572,8 @@ def plot_multiyear_predictions():
         has_bathymetry = False
     
     # Create a custom colormap for krill presence probability percentiles
-    # Use 'YlOrRd' colormap as specified in memory
-    percentile_cmap = plt.cm.Reds
+    # Use 'Reds' colormap as specified in memory
+    contour_cmap = plt.cm.Reds
     
     # Store all prediction grids to calculate global percentiles
     all_predictions = []
@@ -638,14 +637,22 @@ def plot_multiyear_predictions():
             'lat_grid': lat_grid
         })
     
-    # Calculate global percentile thresholds from all predictions
-    percentile_values = {}
-    for p in percentile_thresholds:
-        percentile_values[p] = np.nanpercentile(all_predictions, p)
+    # Calculate global quantile thresholds from all predictions
+    quantile_values = {}
+    for q in quantile_thresholds:
+        if q == 0:
+            quantile_values[q] = np.nanmin(all_predictions)
+        elif q == 100:
+            quantile_values[q] = np.nanmax(all_predictions)
+        else:
+            quantile_values[q] = np.nanpercentile(all_predictions, q)
     
-    logger.info(f"Calculated global percentile thresholds: {percentile_values}")
+    logger.info(f"Calculated global quantile thresholds: {quantile_values}")
     
-    # Second pass: plot each year with percentile visualization
+    # Create contour levels based on quantile values
+    contour_levels_plot = [quantile_values[q] for q in quantile_thresholds]
+    
+    # Second pass: plot each year with contour visualization
     for i, year_data in enumerate(all_prediction_grids):
         year = year_data['year']
         presence_grid = year_data['grid']
@@ -699,73 +706,86 @@ def plot_multiyear_predictions():
                    bbox=dict(boxstyle='round,pad=0.3', fc='white', alpha=0.7),
                    zorder=1000)  # High z-order to ensure it's on top
         
-        # Create a categorized grid based on percentiles
+        # Create a categorized grid based on quantiles
+        # Instead of using the raw probability values, we'll create a grid with category values
         categorized_grid = np.zeros_like(presence_grid)
         categorized_grid[:] = np.nan  # Start with all NaN
         
-        # Fill in the grid with category values based on percentiles
-        # Each category corresponds to a percentile range
-        for p_idx, p in enumerate(sorted(percentile_thresholds)):
-            if p_idx == 0:
-                # First category: values below the first percentile threshold
-                mask = ~np.isnan(presence_grid) & (presence_grid < percentile_values[p])
-                categorized_grid[mask] = p_idx
+        # Fill in the grid with category values based on quantiles
+        for q_idx in range(len(quantile_thresholds)-1):
+            current_q = quantile_thresholds[q_idx]
+            next_q = quantile_thresholds[q_idx+1]
+            
+            # Get threshold values
+            current_threshold = quantile_values[current_q]
+            next_threshold = quantile_values[next_q]
+            
+            # Create mask for values in this quantile range
+            if q_idx == 0:  # First quantile includes the minimum
+                mask = ~np.isnan(presence_grid) & (presence_grid <= next_threshold)
             else:
-                # Other categories: values between current and previous percentile
-                prev_p = sorted(percentile_thresholds)[p_idx-1]
-                mask = (presence_grid >= percentile_values[prev_p]) & (presence_grid < percentile_values[p])
-                categorized_grid[mask] = p_idx
+                mask = (presence_grid > current_threshold) & (presence_grid <= next_threshold)
+            
+            # Assign a value representing this quantile range (use the quantile index)
+            categorized_grid[mask] = q_idx
         
-        # Final category: values above the highest percentile threshold
-        highest_p = sorted(percentile_thresholds)[-1]
-        mask = presence_grid >= percentile_values[highest_p]
-        categorized_grid[mask] = len(percentile_thresholds)
-        
-        # Plot the categorized grid with improved styling
+        # Plot the categorized grid with contourf for smoother transitions
         im = ax.pcolormesh(
             lon_grid, lat_grid, categorized_grid,
             transform=ccrs.PlateCarree(),
-            cmap=percentile_cmap,
-            vmin=0, vmax=len(percentile_thresholds),
-            shading='auto',
+            cmap=contour_cmap,
+            alpha=0.9,
             zorder=10
         )
+        
+        # # Add contour lines for better visualization of boundaries between quantiles
+        # ax.contour(
+        #     lon_grid, lat_grid, categorized_grid,
+        #     levels=np.arange(len(quantile_thresholds)-1),  # Contour lines at category boundaries
+        #     colors='k',
+        #     linewidths=0.3,
+        #     alpha=0.3,
+        #     transform=ccrs.PlateCarree(),
+        #     zorder=11
+        # )
     
-    # Create a custom colorbar with percentile labels
+    # Create a custom colorbar
     cbar_ax = fig.add_axes([0.92, 0.15, 0.02, 0.7])  # [left, bottom, width, height]
     
     # Create the colorbar with improved styling
-    norm = mcolors.BoundaryNorm(np.arange(len(percentile_thresholds)+2), percentile_cmap.N)
-    sm = plt.cm.ScalarMappable(cmap=percentile_cmap, norm=norm)
+    norm = mcolors.BoundaryNorm(np.arange(len(quantile_thresholds)), contour_cmap.N)
+    sm = plt.cm.ScalarMappable(cmap=contour_cmap, norm=norm)
     sm.set_array([])
     
     cbar = fig.colorbar(sm, cax=cbar_ax)
     
     # Create labels for the colorbar with improved styling
     cbar_labels = []
-    cbar_labels.append(f'< {percentile_thresholds[0]}th')
-    
-    for i in range(len(percentile_thresholds)-1):
-        cbar_labels.append(f'{percentile_thresholds[i]}th-{percentile_thresholds[i+1]}th')
-    
-    cbar_labels.append(f'> {percentile_thresholds[-1]}th')
+    for q_idx in range(len(quantile_thresholds)-1):
+        current_q = quantile_thresholds[q_idx]
+        next_q = quantile_thresholds[q_idx+1]
+        
+        if q_idx == 0:
+            cbar_labels.append(f'0-{next_q}th')
+        else:
+            cbar_labels.append(f'{current_q}-{next_q}th')
     
     # Set the colorbar tick positions
-    cbar.set_ticks(np.linspace(0.5, len(percentile_thresholds) + 0.5, len(percentile_thresholds) + 1))
+    cbar.set_ticks(np.arange(len(quantile_thresholds)-1) + 0.5)  # Center ticks in each category
     cbar.set_ticklabels(cbar_labels)
     cbar.ax.tick_params(labelsize=14)  # Font size as per memory
     
     # Add colorbar label with improved styling
-    cbar.set_label('Krill Presence Probability\nPercentiles', fontsize=20, labelpad=15)  # Font size as per memory
+    cbar.set_label('Krill Presence Probability\nQuantiles', fontsize=20, labelpad=15)  # Font size as per memory
     
     # Adjust layout to fit labels and colorbar
     plt.tight_layout(rect=[0, 0, 0.9, 1])
     
     # Save figure with higher resolution
     os.makedirs('output/figures', exist_ok=True)
-    plt_path = 'output/figures/multiyear_krill_percentiles.png'
+    plt_path = 'output/figures/multiyear_krill_contours.png'
     plt.savefig(plt_path, dpi=600, bbox_inches='tight')
-    logger.info(f"Saved high-resolution multi-year krill percentiles plot to: {plt_path}")
+    logger.info(f"Saved high-resolution multi-year krill contours plot to: {plt_path}")
     
     # Close the figure to free memory
     plt.close()
