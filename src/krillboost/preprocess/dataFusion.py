@@ -46,7 +46,7 @@ class DataFusion:
                               (self.krillDataSubset.LATITUDE >= latRange[0]) & (self.krillDataSubset.LATITUDE <= latRange[1])]
         self.logger.info(f"Subset to longitude range: {lonRange} and latitude range: {latRange}")
         # Create presence/absence column
-        self.krillDataSubset['KRILL_PRESENCE'] = (self.krillDataSubset['STANDARDISED_KRILL_UNDER_1M2'] > 0.9).astype(int)
+        self.krillDataSubset['KRILL_PRESENCE'] = (self.krillDataSubset['STANDARDISED_KRILL_UNDER_1M2'] > 0.5).astype(int)
         
         # Create log10 transformed column for values above 0
         self.krillDataSubset['KRILL_LOG10'] = self.krillDataSubset['STANDARDISED_KRILL_UNDER_1M2'].apply(lambda x: np.nan if x <= 0 else np.log10(x))

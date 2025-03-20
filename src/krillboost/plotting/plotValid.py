@@ -12,6 +12,7 @@ import xgboost as xgb
 import json
 from matplotlib.colors import LinearSegmentedColormap
 from scipy.interpolate import griddata, RegularGridInterpolator
+import matplotlib.colors as mcolors
 
 # Load map parameters from JSON config
 with open(os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__)))), 'config', 'map_params.json'), 'r') as f:
@@ -21,7 +22,7 @@ with open(os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.d
 def main():
     logging.basicConfig(level=logging.INFO)
     parser = argparse.ArgumentParser(description='Plot validation results')
-    parser.add_argument('plot', type=str, default='all', help='Plot to generate validation against real data (all, catch, response, multiyear)')
+    parser.add_argument('plot', type=str, default='all', help='Plot to generate validation against real data (all, catch, response, multiyear, tree)')
     args = parser.parse_args()
 
     if args.plot == 'all' or args.plot == 'catch':
@@ -30,6 +31,8 @@ def main():
         plot_response_curves()
     if args.plot == 'all' or args.plot == 'multiyear':
         plot_multiyear_predictions()
+    if args.plot == 'tree':
+        plot_xgboost_tree()
     return
 
 
@@ -127,7 +130,7 @@ def plotCatch():
             krillData = pd.read_csv("input/fusedData.csv", encoding='cp1252')
             logger.info(f"Successfully loaded fusedData.csv with cp1252 encoding")
         except Exception as e:
-            logger.error(f"Failed to load krillbase.csv: {str(e)}")
+            logger.error(f"Failed to load fusedData.csv: {str(e)}")
             return
     
     # Define dynamic bounds from the data (like in plotClass.py)
@@ -417,9 +420,6 @@ def plot_response_curves():
     # Add overall title
     plt.suptitle('Response Curves for Top 10 Features (Krill Presence Model)', fontsize=16, y=1.02)
     
-    # Adjust layout
-    plt.tight_layout()
-    
     # Save figure
     os.makedirs('output/figures', exist_ok=True)
     plt_path = 'output/figures/response_curves.png'
@@ -434,16 +434,18 @@ def plot_response_curves():
 
 def plot_multiyear_predictions():
     """
-    Create a multi-year plot of krill presence predictions for years 2011-2016.
+    Create a multi-year plot of krill presence predictions for years 2011-2016,
+    showing percentile areas for each year.
     
     This function:
     1. Processes environmental data for years 2011, 2012, 2013, 2014, 2015, and 2016
     2. Makes predictions using the trained presence model for each year
-    3. Creates a 6-panel figure showing predicted probability values
-    4. Overlays krill presence (dots) and absence (x) points from the raw dataset for each year
+    3. Creates a 6-panel figure showing percentile areas for krill presence probability
+    4. Uses a segmented colormap to highlight different percentile ranges
+    5. Includes bathymetry contours for better geographic context
     """
     logger = logging.getLogger(__name__)
-    logger.info('Creating multi-year krill presence predictions plot...')
+    logger.info('Creating multi-year krill presence predictions plot with percentiles...')
     
     # Load presence model
     presence_model_path = "output/models/presence_model.json"
@@ -513,12 +515,16 @@ def plot_multiyear_predictions():
     # Define years to process
     years = [2011, 2012, 2013, 2014, 2015, 2016]
     
+    # Define percentile thresholds to visualize
+    # We'll use multiple percentiles to create segments
+    percentile_thresholds = [25, 50, 75, 90]
+    
     # Set up figure with parameters matching envData.png
     plt.rcParams.update({'font.size': 20})  # Set default font size to 20
     fig = plt.figure(figsize=(14, 12))
     
-    # Create a 3x2 grid for subplots
-    gs = fig.add_gridspec(3, 2, hspace=0.3, wspace=0.2)
+    # Create a 3x2 grid for subplots with minimal spacing as per memory
+    gs = fig.add_gridspec(3, 2, hspace=0.05, wspace=0.05)
     axes = []
     
     # Create subplots with PlateCarree projection
@@ -540,15 +546,41 @@ def plot_multiyear_predictions():
             logger.error(f"Failed to load fusedData.csv: {str(e)}")
             return
     
-    # Define dynamic bounds from the data (like in plotClass.py)
-    lonBounds = [krillData['LONGITUDE'].min() - 1, krillData['LONGITUDE'].max() + 1]
-    latBounds = [krillData['LATITUDE'].min() - 1, krillData['LATITUDE'].max() + 1]
-    grid_res = 2.0  # 2-degree grid cells like in plotClass.py
+    # Set map bounds according to memory specifications
+    lon_min = -70
+    lon_max = -40
+    lat_min = -72
+    lat_max = -56
+    lonBounds = [lon_min, lon_max]
+    latBounds = [lat_min, lat_max]
+    grid_step = 0.1  # Higher resolution grid as per memory
     
-    # Create a custom colormap for krill presence probability
-    cmap = plt.get_cmap('Reds')
+    logger.info(f"Using map bounds: lon=[{lon_min}, {lon_max}], lat=[{lat_min}, {lat_max}], grid_step={grid_step}")
     
-    # Process each year
+    # Load bathymetry for contours
+    try:
+        bath = xr.open_dataset(f"input/raw_data/bathymetry.nc")
+        # Create masked array for bathymetry where elevation <= 0
+        bathymetry = abs(bath.elevation.values)
+        # Mask both land (elevation > 0) and invalid points
+        masked_bathymetry = np.ma.masked_where((bathymetry <= 0) | (bathymetry > 10000), bathymetry)
+        # Create contour levels every 400m
+        contour_levels = np.arange(0, 3000, 400)
+        has_bathymetry = True
+        logger.info("Loaded bathymetry data for contours")
+    except Exception as e:
+        logger.warning(f"Could not load bathymetry data: {str(e)}")
+        has_bathymetry = False
+    
+    # Create a custom colormap for krill presence probability percentiles
+    # Use 'YlOrRd' colormap as specified in memory
+    percentile_cmap = plt.cm.Reds
+    
+    # Store all prediction grids to calculate global percentiles
+    all_predictions = []
+    all_prediction_grids = []
+    
+    # First pass: process each year and collect predictions
     for i, year in enumerate(years):
         logger.info(f"Processing year {year}...")
         
@@ -586,6 +618,9 @@ def plot_multiyear_predictions():
         logger.info(f"Predicting krill presence for {year}...")
         presence_probs = pmod.predict_proba(X_pred)[:, 1]  # Probability of presence
         
+        # Store all valid predictions for percentile calculation
+        all_predictions.extend(presence_probs)
+        
         # Create a grid for plotting
         presence_grid = np.full((len(lats), len(lons)), np.nan)
         
@@ -595,60 +630,142 @@ def plot_multiyear_predictions():
             lon_idx = np.where(lons == row['LONGITUDE'])[0][0]
             presence_grid[lat_idx, lon_idx] = presence_probs[j]
         
+        # Store the grid for this year
+        all_prediction_grids.append({
+            'year': year,
+            'grid': presence_grid,
+            'lon_grid': lon_grid,
+            'lat_grid': lat_grid
+        })
+    
+    # Calculate global percentile thresholds from all predictions
+    percentile_values = {}
+    for p in percentile_thresholds:
+        percentile_values[p] = np.nanpercentile(all_predictions, p)
+    
+    logger.info(f"Calculated global percentile thresholds: {percentile_values}")
+    
+    # Second pass: plot each year with percentile visualization
+    for i, year_data in enumerate(all_prediction_grids):
+        year = year_data['year']
+        presence_grid = year_data['grid']
+        lon_grid = year_data['lon_grid']
+        lat_grid = year_data['lat_grid']
+        
         # Get the current subplot
         ax = axes[i]
         
-        # Set extent to focus on Antarctic Peninsula region using dynamic bounds
+        # Set extent to focus on Antarctic Peninsula region using specified bounds
         ax.set_extent(lonBounds + latBounds, crs=ccrs.PlateCarree())
         
-        # Add coastlines and land features
+        # Add coastlines and land features with improved styling
         ax.add_feature(cfeature.LAND, facecolor='lightgrey', zorder=100)
-        ax.coastlines(linewidth=1.5, zorder=101)
+        ax.coastlines(linewidth=1.5, zorder=101)  # Coastline linewidth of 1.5 as per memory
         
-        # Plot the prediction grid
-        im = ax.pcolormesh(
-            lon_grid, lat_grid, presence_grid, 
-            transform=ccrs.PlateCarree(),
-            cmap=cmap, 
-            vmin=0, vmax=0.8,
-            shading='auto',
-            zorder=1
-        )
+        # Add bathymetry contours if available
+        if has_bathymetry:
+            cs = ax.contour(bath.lon, bath.lat, 
+                          masked_bathymetry, levels=contour_levels,
+                          colors='gray', linewidths=0.8, alpha=0.5, transform=ccrs.PlateCarree(),
+                          zorder=90)  # Increased z-order to 90, just below the year annotation (1000) and land (100)
         
-        # Krill presence points plotting is turned off as requested
+        # Add gridlines with improved styling - only show labels on edge plots
+        gl = ax.gridlines(draw_labels=True, linewidth=1.0, color='gray', alpha=0.5, linestyle='--')
         
-        # Add gridlines (simplified for subplots)
-        gl = ax.gridlines(draw_labels=True, linewidth=1, color='gray', alpha=0.5, linestyle='--')
+        # Configure which axes get labels
+        if i >= 4:  # Bottom row
+            gl.bottom_labels = True
+            gl.xlabel_style = {'size': 14}
+            # Add x-axis label
+            ax.set_xlabel('Longitude', fontsize=14)
+        else:
+            gl.bottom_labels = False
+            
+        if i % 2 == 0:  # Left column
+            gl.left_labels = True
+            gl.ylabel_style = {'size': 14}
+            # Add y-axis label
+            ax.set_ylabel('Latitude', fontsize=14)
+        else:
+            gl.left_labels = False
+            
+        # Always hide top and right labels
         gl.top_labels = False
         gl.right_labels = False
-        gl.xlabel_style = {'size': 14}
-        gl.ylabel_style = {'size': 14}
         
-        # Add title for this subplot - just the year
-        ax.set_title(f'{year}', fontsize=20)
+        # Add year as an annotation in the bottom left corner with high z-order to ensure visibility
+        ax.annotate(f'{year}', xy=(0.05, 0.05), xycoords='axes fraction', 
+                   fontsize=24, fontweight='bold', ha='left', va='bottom',
+                   bbox=dict(boxstyle='round,pad=0.3', fc='white', alpha=0.7),
+                   zorder=1000)  # High z-order to ensure it's on top
         
-        # Only add axis labels for edge subplots
-        if i >= 4:  # Bottom row
-            ax.set_xlabel('Longitude', fontsize=14)
-        if i % 2 == 0:  # Left column
-            ax.set_ylabel('Latitude', fontsize=14)
+        # Create a categorized grid based on percentiles
+        categorized_grid = np.zeros_like(presence_grid)
+        categorized_grid[:] = np.nan  # Start with all NaN
+        
+        # Fill in the grid with category values based on percentiles
+        # Each category corresponds to a percentile range
+        for p_idx, p in enumerate(sorted(percentile_thresholds)):
+            if p_idx == 0:
+                # First category: values below the first percentile threshold
+                mask = ~np.isnan(presence_grid) & (presence_grid < percentile_values[p])
+                categorized_grid[mask] = p_idx
+            else:
+                # Other categories: values between current and previous percentile
+                prev_p = sorted(percentile_thresholds)[p_idx-1]
+                mask = (presence_grid >= percentile_values[prev_p]) & (presence_grid < percentile_values[p])
+                categorized_grid[mask] = p_idx
+        
+        # Final category: values above the highest percentile threshold
+        highest_p = sorted(percentile_thresholds)[-1]
+        mask = presence_grid >= percentile_values[highest_p]
+        categorized_grid[mask] = len(percentile_thresholds)
+        
+        # Plot the categorized grid with improved styling
+        im = ax.pcolormesh(
+            lon_grid, lat_grid, categorized_grid,
+            transform=ccrs.PlateCarree(),
+            cmap=percentile_cmap,
+            vmin=0, vmax=len(percentile_thresholds),
+            shading='auto',
+            zorder=10
+        )
     
-    # Add a colorbar that applies to all subplots
+    # Create a custom colorbar with percentile labels
     cbar_ax = fig.add_axes([0.92, 0.15, 0.02, 0.7])  # [left, bottom, width, height]
-    cbar = fig.colorbar(im, cax=cbar_ax)
-    cbar.set_label('Predicted Krill Presence Probability', fontsize=20)
-    cbar.ax.tick_params(labelsize=18)
     
-    # No legend since we're not showing krill presence points
+    # Create the colorbar with improved styling
+    norm = mcolors.BoundaryNorm(np.arange(len(percentile_thresholds)+2), percentile_cmap.N)
+    sm = plt.cm.ScalarMappable(cmap=percentile_cmap, norm=norm)
+    sm.set_array([])
     
-    # Add overall title
-    plt.suptitle('Predicted Krill Presence Probability (2011-2016)', fontsize=24, y=0.98)
+    cbar = fig.colorbar(sm, cax=cbar_ax)
+    
+    # Create labels for the colorbar with improved styling
+    cbar_labels = []
+    cbar_labels.append(f'< {percentile_thresholds[0]}th')
+    
+    for i in range(len(percentile_thresholds)-1):
+        cbar_labels.append(f'{percentile_thresholds[i]}th-{percentile_thresholds[i+1]}th')
+    
+    cbar_labels.append(f'> {percentile_thresholds[-1]}th')
+    
+    # Set the colorbar tick positions
+    cbar.set_ticks(np.linspace(0.5, len(percentile_thresholds) + 0.5, len(percentile_thresholds) + 1))
+    cbar.set_ticklabels(cbar_labels)
+    cbar.ax.tick_params(labelsize=14)  # Font size as per memory
+    
+    # Add colorbar label with improved styling
+    cbar.set_label('Krill Presence Probability\nPercentiles', fontsize=20, labelpad=15)  # Font size as per memory
+    
+    # Adjust layout to fit labels and colorbar
+    plt.tight_layout(rect=[0, 0, 0.9, 1])
     
     # Save figure with higher resolution
     os.makedirs('output/figures', exist_ok=True)
-    plt_path = 'output/figures/multiyear_krill_predictions.png'
+    plt_path = 'output/figures/multiyear_krill_percentiles.png'
     plt.savefig(plt_path, dpi=600, bbox_inches='tight')
-    logger.info(f"Saved high-resolution multi-year krill predictions plot to: {plt_path}")
+    logger.info(f"Saved high-resolution multi-year krill percentiles plot to: {plt_path}")
     
     # Close the figure to free memory
     plt.close()
@@ -773,6 +890,217 @@ def loadFeatures(start_date, end_date):
     krillDataset['SST_MAX'] = interp_sst_max((lat, lon))
     
     return krillDataset
+
+def plot_xgboost_tree():
+    """
+    Visualize the structure of the XGBoost classifier tree.
+    
+    This function:
+    1. Loads the trained presence model
+    2. Creates a feature importance plot
+    3. Saves tree information to text files
+    4. Saves the visualizations to the output directory
+    """
+    logger = logging.getLogger(__name__)
+    logger.info('Creating visualization of XGBoost tree structure...')
+    
+    # Define paths
+    presence_model_path = "output/models/presence_model.json"
+    
+    # Check if model exists
+    if not os.path.exists(presence_model_path):
+        logger.error(f"Model file not found: {presence_model_path}")
+        return
+    
+    try:
+        # Load the model
+        pmod = xgb.XGBClassifier()
+        pmod.load_model(presence_model_path)
+        logger.info("Model loaded successfully")
+        
+        # Get the booster from the model
+        booster = pmod.get_booster()
+        
+        # Get feature names from the model dump
+        dump = booster.get_dump()
+        
+        # Try to extract feature names from the model
+        try:
+            # First try to get feature names directly
+            feature_names = booster.feature_names
+            if not feature_names:
+                raise AttributeError("No feature names found in booster")
+        except (AttributeError, TypeError):
+            # If that fails, try to infer from the first tree
+            logger.info("Feature names not found in model, creating generic names")
+            # Count unique feature IDs in the first tree
+            import re
+            first_tree = dump[0]
+            feature_ids = set(re.findall(r'f(\d+)', first_tree))
+            num_features = max(int(fid) for fid in feature_ids) + 1 if feature_ids else 0
+            feature_names = [f'f{i}' for i in range(num_features)]
+        
+        logger.info(f"Using feature names: {feature_names}")
+        
+        # Create output directory if it doesn't exist
+        os.makedirs('output/figures/trees', exist_ok=True)
+        
+        # Determine how many trees to visualize (up to 5)
+        # Get the number of trees directly from the booster
+        num_trees = min(5, len(dump))
+        logger.info(f"Visualizing {num_trees} trees out of {len(dump)} total trees")
+        
+        # Save tree structure to text files
+        for i in range(num_trees):
+            tree_info = dump[i]
+            tree_path = f'output/figures/trees/tree_{i}.txt'
+            with open(tree_path, 'w') as f:
+                f.write(tree_info)
+            logger.info(f"Saved tree {i} structure to {tree_path}")
+            
+            # Instead of using xgb.plot_tree which requires Graphviz,
+            # we'll create a simplified tree visualization using matplotlib
+            try:
+                # Parse the tree structure
+                import re
+                nodes = []
+                for line in tree_info.split('\n'):
+                    if line.strip():
+                        # Extract node information
+                        match = re.search(r'(\d+):\[(.*)\]', line)
+                        if match:
+                            node_id = int(match.group(1))
+                            node_info = match.group(2)
+                            nodes.append((node_id, node_info))
+                
+                # Create a simple visualization of the tree structure
+                plt.figure(figsize=(15, 10))
+                
+                # Calculate the maximum depth of the tree
+                max_depth = 0
+                for node_id, _ in nodes:
+                    depth = 0
+                    while node_id > 0:
+                        node_id = (node_id - 1) // 2
+                        depth += 1
+                    max_depth = max(max_depth, depth)
+                
+                # Plot each node
+                for node_id, node_info in nodes:
+                    # Calculate node position
+                    depth = 0
+                    temp_id = node_id
+                    while temp_id > 0:
+                        temp_id = (temp_id - 1) // 2
+                        depth += 1
+                    
+                    x = depth / (max_depth + 1)
+                    y = node_id / (2**(depth+1) + 1)
+                    
+                    # Determine if it's a leaf or decision node
+                    if 'leaf' in node_info:
+                        color = 'lightgreen'
+                        # Extract leaf value
+                        leaf_match = re.search(r'leaf=([^,]+)', node_info)
+                        if leaf_match:
+                            leaf_value = leaf_match.group(1)
+                            node_label = f"Node {node_id}\nLeaf: {leaf_value}"
+                        else:
+                            node_label = f"Node {node_id}\nLeaf"
+                    else:
+                        color = 'lightblue'
+                        # Extract feature and threshold
+                        feature_match = re.search(r'f(\d+)<([^,]+)', node_info)
+                        if feature_match:
+                            feature_id = feature_match.group(1)
+                            threshold = feature_match.group(2)
+                            # Try to get actual feature name if available
+                            feature_name = feature_names[int(feature_id)] if int(feature_id) < len(feature_names) else f"f{feature_id}"
+                            node_label = f"Node {node_id}\n{feature_name} < {threshold}"
+                        else:
+                            node_label = f"Node {node_id}\nDecision"
+                    
+                    # Plot the node
+                    plt.scatter(x, y, s=100, c=color, edgecolors='black')
+                    plt.text(x, y+0.02, node_label, 
+                            ha='center', va='center', fontsize=8)
+                    
+                    # Add edges to children
+                    left_child = 2 * node_id + 1
+                    right_child = 2 * node_id + 2
+                    
+                    left_exists = any(id == left_child for id, _ in nodes)
+                    right_exists = any(id == right_child for id, _ in nodes)
+                    
+                    if left_exists:
+                        child_depth = depth + 1
+                        child_x = child_depth / (max_depth + 1)
+                        child_y = left_child / (2**(child_depth+1) + 1)
+                        plt.plot([x, child_x], [y, child_y], 'k-', alpha=0.5)
+                    
+                    if right_exists:
+                        child_depth = depth + 1
+                        child_x = child_depth / (max_depth + 1)
+                        child_y = right_child / (2**(child_depth+1) + 1)
+                        plt.plot([x, child_x], [y, child_y], 'k-', alpha=0.5)
+                
+                plt.title(f'Simplified Tree {i} Structure', fontsize=16)
+                plt.axis('off')
+                plt.tight_layout()
+                
+                # Save the tree visualization
+                tree_viz_path = f'output/figures/trees/tree_{i}_viz.png'
+                plt.savefig(tree_viz_path, dpi=300, bbox_inches='tight')
+                logger.info(f"Saved tree {i} visualization to {tree_viz_path}")
+                plt.close()
+            except Exception as e:
+                logger.error(f"Error creating tree visualization for tree {i}: {str(e)}")
+        
+        # Create a feature importance plot
+        plt.figure(figsize=(12, 8))
+        
+        # Get feature importances
+        try:
+            # Try to get feature importances by gain
+            importance_dict = booster.get_score(importance_type='gain')
+            
+            # Sort features by importance
+            sorted_importances = sorted(importance_dict.items(), key=lambda x: x[1], reverse=True)
+            features = [item[0] for item in sorted_importances]
+            importances = [item[1] for item in sorted_importances]
+            
+            # Plot feature importances
+            plt.barh(range(len(features)), importances, align='center')
+            plt.yticks(range(len(features)), features)
+            plt.xlabel('Importance (gain)')
+            plt.ylabel('Feature')
+            plt.title('Feature Importance in XGBoost Model')
+            plt.tight_layout()
+            
+            # Save the feature importance plot
+            importance_path = 'output/figures/trees/feature_importance.png'
+            plt.savefig(importance_path, dpi=300, bbox_inches='tight')
+            logger.info(f"Saved feature importance plot to {importance_path}")
+        except Exception as e:
+            logger.error(f"Error creating feature importance plot: {str(e)}")
+        
+        # Create a text file with feature importance rankings
+        try:
+            importance_txt_path = 'output/figures/trees/feature_importance.txt'
+            with open(importance_txt_path, 'w') as f:
+                f.write("Feature Importance Rankings (by gain):\n")
+                for i, (feature, importance) in enumerate(sorted_importances):
+                    f.write(f"{i+1}. {feature}: {importance:.4f}\n")
+            logger.info(f"Saved feature importance rankings to {importance_txt_path}")
+        except Exception as e:
+            logger.error(f"Error saving feature importance rankings: {str(e)}")
+        
+        logger.info("Tree visualization completed successfully")
+        
+    except Exception as e:
+        logger.error(f"Error visualizing tree: {str(e)}")
+        import traceback
+        logger.error(traceback.format_exc())
 
 if __name__ == '__main__':
     main()
