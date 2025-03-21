@@ -47,7 +47,7 @@ class KrillXGBoost:
 
     def train_models(self):
         # Separate features and targets
-        X = self.data.drop(columns=['KRILL_PRESENCE', 'KRILL_LOG10', 'KRILL_SQRT', 'KRILL_LOGN', 'KRILL_QUAN', 'KRILL_ORIGINAL'])
+        X = self.data.drop(columns=['KRILL_PRESENCE', 'KRILL_LOG10', 'KRILL_SQRT', 'KRILL_LOGN', 'KRILL_QUAN', 'KRILL_ORIGINAL', 'LONGITUDE', 'LATITUDE'])
         y_presence = self.data['KRILL_PRESENCE']
         y_abundance = self.data['KRILL_ORIGINAL']
         

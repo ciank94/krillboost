@@ -13,6 +13,7 @@ import json
 from matplotlib.colors import LinearSegmentedColormap
 from scipy.interpolate import griddata, RegularGridInterpolator
 import matplotlib.colors as mcolors
+from scipy.ndimage import gaussian_filter
 
 # Load map parameters from JSON config
 with open(os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__)))), 'config', 'map_params.json'), 'r') as f:
@@ -112,7 +113,27 @@ def plotCatch():
         lat_idx = np.where(lats == row['LATITUDE'])[0][0]
         lon_idx = np.where(lons == row['LONGITUDE'])[0][0]
         presence_grid[lat_idx, lon_idx] = presence_probs[i]
+
+    # NaN-aware gaussian smoothing
+    # First create a mask of valid (non-NaN) values
+    valid_mask = ~np.isnan(presence_grid)
     
+    # Create a copy of the grid with zeros instead of NaNs for filtering
+    grid_for_filter = np.copy(presence_grid)
+    grid_for_filter[~valid_mask] = 0
+    
+    # Apply gaussian filter to both the data and the mask
+    smooth_grid = gaussian_filter(grid_for_filter, sigma=1)
+    smooth_mask = gaussian_filter(valid_mask.astype(float), sigma=1)
+    
+    # Divide by the mask to normalize only where we have data
+    # Avoid division by zero
+    smooth_mask[smooth_mask < 1e-10] = 1  # Avoid division by zero
+    presence_grid = smooth_grid / smooth_mask
+    
+    # Restore NaN values where we had no data influence (threshold can be adjusted)
+    presence_grid[smooth_mask < 0.2] = np.nan
+
     # Create figure with larger size
     plt.rcParams.update({'font.size': 20})  # Set default font size to 20
     fig = plt.figure(figsize=(14, 12))
@@ -606,6 +627,9 @@ def plot_multiyear_predictions():
         # Remove NaN values from the dataset
         valid_mask = ~krillDataset.isna().any(axis=1)
         valid_features = krillDataset[valid_mask]
+
+        # Drop latitude and longitude columns
+        valid_features = valid_features.drop(['LATITUDE', 'LONGITUDE'], axis=1)
         
         # Create DataFrame for prediction
         X_pred = valid_features.copy()
@@ -616,7 +640,7 @@ def plot_multiyear_predictions():
         # Make predictions
         logger.info(f"Predicting krill presence for {year}...")
         presence_probs = pmod.predict_proba(X_pred)[:, 1]  # Probability of presence
-        
+          
         # Store all valid predictions for percentile calculation
         all_predictions.extend(presence_probs)
         
@@ -625,10 +649,30 @@ def plot_multiyear_predictions():
         
         # Map the predictions back to the grid
         for j, (idx, row) in enumerate(valid_features.iterrows()):
-            lat_idx = np.where(lats == row['LATITUDE'])[0][0]
-            lon_idx = np.where(lons == row['LONGITUDE'])[0][0]
+            lat_idx = np.where(lats == krillDataset['LATITUDE'][idx])[0][0]
+            lon_idx = np.where(lons == krillDataset['LONGITUDE'][idx])[0][0]
             presence_grid[lat_idx, lon_idx] = presence_probs[j]
+
+        # NaN-aware gaussian smoothing
+        # First create a mask of valid (non-NaN) values
+        valid_mask = ~np.isnan(presence_grid)
         
+        # Create a copy of the grid with zeros instead of NaNs for filtering
+        grid_for_filter = np.copy(presence_grid)
+        grid_for_filter[~valid_mask] = 0
+        
+        # Apply gaussian filter to both the data and the mask
+        smooth_grid = gaussian_filter(grid_for_filter, sigma=1)
+        smooth_mask = gaussian_filter(valid_mask.astype(float), sigma=0.5)
+        
+        # Divide by the mask to normalize only where we have data
+        # Avoid division by zero
+        smooth_mask[smooth_mask < 1e-10] = 1  # Avoid division by zero
+        presence_grid = smooth_grid / smooth_mask
+        
+        # Restore NaN values where we had no data influence (threshold can be adjusted)
+        presence_grid[smooth_mask < 0.2] = np.nan
+
         # Store the grid for this year
         all_prediction_grids.append({
             'year': year,
