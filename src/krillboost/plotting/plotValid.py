@@ -23,7 +23,7 @@ with open(os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.d
 def main():
     logging.basicConfig(level=logging.INFO)
     parser = argparse.ArgumentParser(description='Plot validation results')
-    parser.add_argument('plot', type=str, default='all', help='Plot to generate validation against real data (all, catch, response, multiyear, tree)')
+    parser.add_argument('plot', type=str, default='all', help='Plot to generate validation against real data (all, catch, response, multiyear, tree, indices)')
     args = parser.parse_args()
 
     if args.plot == 'all' or args.plot == 'catch':
@@ -34,6 +34,8 @@ def main():
         plot_multiyear_predictions()
     if args.plot == 'tree':
         plot_xgboost_tree()
+    if args.plot == 'all' or args.plot == 'indices':
+        plot_yearly_indices()
     return
 
 
@@ -1128,33 +1130,40 @@ def plot_xgboost_tree():
             # Try to get feature importances by gain
             importance_dict = booster.get_score(importance_type='gain')
             
-            # Sort features by importance
-            sorted_importances = sorted(importance_dict.items(), key=lambda x: x[1], reverse=True)
-            features = [item[0] for item in sorted_importances]
-            importances = [item[1] for item in sorted_importances]
+            # Convert to DataFrame for easier handling
+            importance_df = pd.DataFrame({
+                'Feature': list(importance_dict.keys()),
+                'Importance': list(importance_dict.values())
+            })
             
-            # Plot feature importances
-            plt.barh(range(len(features)), importances, align='center')
-            plt.yticks(range(len(features)), features)
-            plt.xlabel('Importance (gain)')
-            plt.ylabel('Feature')
-            plt.title('Feature Importance in XGBoost Model')
-            plt.tight_layout()
-            
-            # Save the feature importance plot
-            importance_path = 'output/figures/trees/feature_importance.png'
-            plt.savefig(importance_path, dpi=300, bbox_inches='tight')
-            logger.info(f"Saved feature importance plot to {importance_path}")
+            # Map feature indices (f0, f1, etc.) to actual feature names
+            feature_map = {f'f{i}': name for i, name in enumerate(feature_names)}
+            importance_df['Feature'] = importance_df['Feature'].map(feature_map)
         except Exception as e:
-            logger.error(f"Error creating feature importance plot: {str(e)}")
+            logger.error(f"Error getting feature importance: {e}")
+            return
+        
+        # Sort by importance and plot
+        importance_df = importance_df.sort_values('Importance', ascending=False)
+        plt.barh(range(len(importance_df)), importance_df['Importance'], align='center')
+        plt.yticks(range(len(importance_df)), importance_df['Feature'])
+        plt.xlabel('Importance (gain)')
+        plt.ylabel('Feature')
+        plt.title('Feature Importance in XGBoost Model')
+        plt.tight_layout()
+        
+        # Save the feature importance plot
+        importance_path = 'output/figures/trees/feature_importance.png'
+        plt.savefig(importance_path, dpi=300, bbox_inches='tight')
+        logger.info(f"Saved feature importance plot to {importance_path}")
         
         # Create a text file with feature importance rankings
         try:
             importance_txt_path = 'output/figures/trees/feature_importance.txt'
             with open(importance_txt_path, 'w') as f:
                 f.write("Feature Importance Rankings (by gain):\n")
-                for i, (feature, importance) in enumerate(sorted_importances):
-                    f.write(f"{i+1}. {feature}: {importance:.4f}\n")
+                for i, (feature, importance) in enumerate(importance_df.iterrows()):
+                    f.write(f"{i+1}. {feature['Feature']}: {importance['Importance']:.4f}\n")
             logger.info(f"Saved feature importance rankings to {importance_txt_path}")
         except Exception as e:
             logger.error(f"Error saving feature importance rankings: {str(e)}")
@@ -1165,6 +1174,252 @@ def plot_xgboost_tree():
         logger.error(f"Error visualizing tree: {str(e)}")
         import traceback
         logger.error(traceback.format_exc())
+
+def plot_yearly_indices():
+    """
+    Create a plot showing yearly indices for krill data:
+    1. Survey index based on proportion of krill presence from krillbase.csv
+    2. Prediction index based on average probability of presence from the classifier
+    3. Catch data shown as dots for available years
+    
+    Only years with both survey and prediction data are included.
+    """
+    logger = logging.getLogger(__name__)
+    logger.info('Plotting yearly krill indices...')
+    
+    # Load krillbase data for survey index
+    try:
+        krillbase = pd.read_csv("input/raw_data/krillbase.csv", encoding='unicode_escape')
+        logger.info(f"Successfully loaded krillbase.csv")
+    except Exception as e:
+        logger.error(f"Failed to load krillbase.csv: {str(e)}")
+        return
+    
+    # Convert date to datetime and extract year
+    krillbase['DATE'] = pd.to_datetime(krillbase['DATE'], format='%d/%m/%Y', errors='coerce')
+    krillbase['YEAR'] = krillbase['DATE'].dt.year
+    
+    # Filter out rows with missing dates or krill data
+    krillbase = krillbase.dropna(subset=['YEAR', 'STANDARDISED_KRILL_UNDER_1M2'])
+    
+    # Create presence indicator (1 if krill present, 0 if absent)
+    krillbase['KRILL_PRESENT'] = (krillbase['STANDARDISED_KRILL_UNDER_1M2'] > 0).astype(int)
+    
+    # Calculate proportion of samples with krill presence per year
+    presence_counts = krillbase.groupby('YEAR')['KRILL_PRESENT'].sum()
+    total_counts = krillbase.groupby('YEAR').size()
+    survey_yearly = pd.DataFrame({
+        'YEAR': presence_counts.index,
+        'PRESENCE_COUNT': presence_counts.values,
+        'TOTAL_COUNT': total_counts.values
+    })
+    
+    # Calculate proportion of presence
+    survey_yearly['PRESENCE_PROPORTION'] = survey_yearly['PRESENCE_COUNT'] / survey_yearly['TOTAL_COUNT']
+    
+    # Filter years with sufficient data points (at least 10)
+    survey_yearly = survey_yearly[survey_yearly['TOTAL_COUNT'] >= 10]
+    survey_yearly = survey_yearly[(survey_yearly['YEAR'] >= 1976) & (survey_yearly['YEAR'] <= 2016)]
+    
+    # Load fused data for predictions
+    try:
+        fused_data = pd.read_csv("input/fusedData.csv")
+        logger.info(f"Successfully loaded fusedData.csv with shape {fused_data.shape}")
+    except Exception as e:
+        logger.error(f"Failed to load fusedData.csv: {str(e)}")
+        return
+    
+    # Check if DATE column exists in fused_data
+    if 'DATE' not in fused_data.columns:
+        logger.info("DATE column not found in fusedData.csv. Trying to match with krillbase data...")
+        
+        # Try to match with krillbase data to get dates
+        # Create a unique identifier based on lat/lon coordinates for joining
+        krillbase['COORD_ID'] = krillbase['LONGITUDE'].round(4).astype(str) + '_' + krillbase['LATITUDE'].round(4).astype(str)
+        fused_data['COORD_ID'] = fused_data['LONGITUDE'].round(4).astype(str) + '_' + fused_data['LATITUDE'].round(4).astype(str)
+        
+        # Create a mapping from COORD_ID to YEAR
+        coord_to_year = krillbase[['COORD_ID', 'YEAR']].drop_duplicates().set_index('COORD_ID')['YEAR'].to_dict()
+        
+        # Apply the mapping to fused_data
+        fused_data['YEAR'] = fused_data['COORD_ID'].map(coord_to_year)
+        
+        # Remove rows where YEAR couldn't be mapped
+        fused_data = fused_data.dropna(subset=['YEAR'])
+        fused_data['YEAR'] = fused_data['YEAR'].astype(int)
+        
+        logger.info(f"Mapped {len(fused_data)} data points to years")
+    
+    # Load presence model (we only need the classifier for probability of presence)
+    logger.info("Loading presence model...")
+    presence_model_path = "output/models/presence_model.json"
+    
+    if not os.path.exists(presence_model_path):
+        logger.error(f"Presence model file not found")
+        return
+    
+    pmod = xgb.XGBClassifier()
+    pmod.load_model(presence_model_path)
+    
+    # Get the exact feature names used by the model to avoid mismatch
+    model_features = pmod.feature_names_in_.tolist() if hasattr(pmod, 'feature_names_in_') else []
+    
+    if not model_features:
+        # If feature_names_in_ is not available, try to get from get_booster().feature_names
+        try:
+            model_features = pmod.get_booster().feature_names
+            logger.info(f"Retrieved {len(model_features)} feature names from model booster")
+        except Exception as e:
+            logger.error(f"Could not get feature names from model: {e}")
+            # Use a hardcoded list of features that we know were used in training
+            model_features = ['DEPTH', 'CHL_MEAN', 'CHL_MIN', 'CHL_MAX', 'IRON_MEAN', 'IRON_MIN', 'IRON_MAX', 
+                             'SSH_MEAN', 'SSH_MIN', 'SSH_MAX', 'VEL_MEAN', 'VEL_MIN', 'VEL_MAX', 
+                             'SST_MEAN', 'SST_MIN', 'SST_MAX']
+            logger.info(f"Using hardcoded list of {len(model_features)} features")
+    
+    # Separate features from targets
+    feature_cols = [col for col in fused_data.columns if col not in ['KRILL_PRESENCE', 'KRILL_LOG10', 'KRILL_SQRT', 
+                                                                     'KRILL_LOGN', 'KRILL_QUAN', 'KRILL_ORIGINAL', 
+                                                                     'LONGITUDE', 'LATITUDE', 'YEAR', 'COORD_ID']]
+    
+    # Filter feature_cols to only include columns that were in the training data
+    feature_cols = [col for col in feature_cols if col in model_features]
+    
+    # Check if we have enough features
+    if len(feature_cols) < 5:
+        logger.error(f"Not enough feature columns found in fusedData.csv. Found: {feature_cols}")
+        return
+    
+    logger.info(f"Using {len(feature_cols)} features for prediction: {feature_cols[:5]}...")
+    
+    # Create a DataFrame to store yearly predictions
+    prediction_yearly = pd.DataFrame(columns=['YEAR', 'AVG_PRESENCE_PROB', 'SAMPLE_COUNT'])
+    
+    # Group by year
+    for year, year_data in fused_data.groupby('YEAR'):
+        logger.info(f"Processing predictions for year {year}")
+        
+        # Skip if too few data points
+        if len(year_data) < 10:
+            logger.info(f"Skipping year {year} - too few data points ({len(year_data)})")
+            continue
+        
+        # Extract features
+        X_pred = year_data[feature_cols].copy()
+        
+        # Handle missing values
+        X_pred = X_pred.fillna(X_pred.mean())
+        
+        # Standardize features
+        X_pred = (X_pred - X_pred.mean()) / X_pred.std()
+        
+        # Make predictions - get probability of presence
+        presence_probs = pmod.predict_proba(X_pred)[:, 1]  # Probability of presence
+        
+        # Calculate average probability of presence for this year
+        avg_presence_prob = np.mean(presence_probs)
+        
+        # Add to yearly predictions DataFrame
+        prediction_yearly = pd.concat([prediction_yearly, 
+                                      pd.DataFrame({'YEAR': [year], 
+                                                   'AVG_PRESENCE_PROB': [avg_presence_prob],
+                                                   'SAMPLE_COUNT': [len(year_data)]})],
+                                     ignore_index=True)
+    
+    # Sort by year
+    prediction_yearly = prediction_yearly.sort_values('YEAR')
+    
+    # Load catch data
+    try:
+        catch_data = pd.read_csv("input/subset_data/catchData.csv")
+        logger.info(f"Successfully loaded catchData.csv")
+        
+        # Convert time column to datetime and extract year
+        catch_data['time'] = pd.to_datetime(catch_data['time'])
+        catch_data['YEAR'] = catch_data['time'].dt.year
+        
+        # Calculate average catch per year
+        catch_yearly = catch_data.groupby('YEAR')['catch'].mean().reset_index()
+        
+        # Apply log transformation to catch data
+        catch_yearly['CATCH_LOG'] = np.log1p(catch_yearly['catch'])
+        
+        # Normalize the log-transformed values to 0-1 range
+        catch_min = catch_yearly['CATCH_LOG'].min()
+        catch_max = catch_yearly['CATCH_LOG'].max()
+        if catch_max > catch_min:
+            catch_yearly['CATCH_INDEX'] = (catch_yearly['CATCH_LOG'] - catch_min) / (catch_max - catch_min)
+        else:
+            catch_yearly['CATCH_INDEX'] = 0
+        
+    except Exception as e:
+        logger.error(f"Failed to load or process catchData.csv: {str(e)}")
+        catch_yearly = None
+    
+    # Find common years between survey and prediction data
+    survey_years = set(survey_yearly['YEAR'])
+    prediction_years = set(prediction_yearly['YEAR'])
+    common_years = sorted(survey_years.intersection(prediction_years))
+    
+    if not common_years:
+        logger.error("No common years found between survey and prediction data")
+        return
+    
+    logger.info(f"Found {len(common_years)} common years between survey and prediction data")
+    
+    # Filter data to only include common years
+    survey_yearly = survey_yearly[survey_yearly['YEAR'].isin(common_years)]
+    prediction_yearly = prediction_yearly[prediction_yearly['YEAR'].isin(common_years)]
+    
+    if catch_yearly is not None:
+        # Only include catch years that are in the common years
+        catch_yearly = catch_yearly[catch_yearly['YEAR'].isin(common_years)]
+        if catch_yearly.empty:
+            catch_yearly = None
+    
+    # Create the plot
+    plt.figure(figsize=(12, 8))
+    
+    # Plot survey index (proportion of presence)
+    plt.plot(survey_yearly['YEAR'], survey_yearly['PRESENCE_PROPORTION'], 'o-', 
+             color='blue', linewidth=2, markersize=8, label='Survey Presence Proportion')
+    
+    # Plot prediction index (average probability of presence)
+    plt.plot(prediction_yearly['YEAR'], prediction_yearly['AVG_PRESENCE_PROB'], 's-', 
+             color='red', linewidth=2, markersize=8, label='Predicted Presence Probability')
+    
+    # Plot catch index as dots if available
+    if catch_yearly is not None and not catch_yearly.empty:
+        plt.scatter(catch_yearly['YEAR'], catch_yearly['CATCH_INDEX'], 
+                  color='green', s=100, marker='d', label='Catch Index (log transform)')
+    
+    # Add labels and title
+    plt.xlabel('Year', fontsize=14)
+    plt.ylabel('Probability / Proportion / Index', fontsize=14)
+    plt.title('Yearly Krill Presence Comparison', fontsize=18)
+    plt.grid(True, linestyle='--', alpha=0.7)
+    plt.legend(fontsize=12)
+    
+    # Set y-axis limits
+    plt.ylim(-0.05, 1.05)
+    
+    # Adjust x-axis to show years clearly
+    if common_years:
+        min_year = min(common_years)
+        max_year = max(common_years)
+        plt.xticks(np.arange(min_year - 1, max_year + 2, 5), rotation=45)
+    
+    # Save the figure
+    os.makedirs("output/figures", exist_ok=True)
+    plt.tight_layout()
+    plt.savefig("output/figures/yearly_krill_indices.png", dpi=300)
+    logger.info("Saved figure to output/figures/yearly_krill_indices.png")
+    
+    # Show the plot
+    plt.show()
+    
+    return
+
 
 if __name__ == '__main__':
     main()
