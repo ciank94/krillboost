@@ -558,25 +558,21 @@ def plot_multiyear_predictions():
     
     # Load krill data
     try:
-        krillData = pd.read_csv("input/fusedData.csv", encoding='latin1')
-        logger.info(f"Successfully loaded fusedData.csv with latin1 encoding")
-    except UnicodeDecodeError:
-        try:
-            krillData = pd.read_csv("input/fusedData.csv", encoding='cp1252')
-            logger.info(f"Successfully loaded fusedData.csv with cp1252 encoding")
-        except Exception as e:
-            logger.error(f"Failed to load fusedData.csv: {str(e)}")
-            return
+        krillData = pd.read_csv("input/fusedData.csv")
+        logger.info(f"Successfully loaded fusedData.csv")
+    except Exception as e:
+        logger.error(f"Failed to load fusedData.csv: {str(e)}")
+        return
     
-    # Set map bounds according to memory specifications
-    lon_min = -70
-    lon_max = -40
-    lat_min = -72
-    lat_max = -56
+    # Define map boundaries and grid step based on data
+    grid_step = 0.5
+    # Define grid bounds based on data, consistent with plotClass.py
+    lon_min = krillData['LONGITUDE'].min()
+    lon_max = krillData['LONGITUDE'].max() 
+    lat_min = krillData['LATITUDE'].min() 
+    lat_max = krillData['LATITUDE'].max() 
     lonBounds = [lon_min, lon_max]
     latBounds = [lat_min, lat_max]
-    grid_step = 0.1  # Higher resolution grid as per memory
-    
     logger.info(f"Using map bounds: lon=[{lon_min}, {lon_max}], lat=[{lat_min}, {lat_max}], grid_step={grid_step}")
     
     # Load bathymetry for contours
@@ -726,14 +722,13 @@ def plot_multiyear_predictions():
         gl = ax.gridlines(draw_labels=True, linewidth=1.0, color='gray', alpha=0.5, linestyle='--')
         
         # Configure which axes get labels
+        gl.bottom_labels = True
+        gl.xlabel_style = {'size': 14}
+        
         if i >= 4:  # Bottom row
-            gl.bottom_labels = True
-            gl.xlabel_style = {'size': 14}
             # Add x-axis label
             ax.set_xlabel('Longitude', fontsize=14)
-        else:
-            gl.bottom_labels = False
-            
+        
         if i % 2 == 0:  # Left column
             gl.left_labels = True
             gl.ylabel_style = {'size': 14}
@@ -1224,7 +1219,7 @@ def plot_yearly_indices():
     # Load fused data for predictions
     try:
         fused_data = pd.read_csv("input/fusedData.csv")
-        logger.info(f"Successfully loaded fusedData.csv with shape {fused_data.shape}")
+        logger.info(f"Successfully loaded fusedData.csv")
     except Exception as e:
         logger.error(f"Failed to load fusedData.csv: {str(e)}")
         return
