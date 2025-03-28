@@ -395,6 +395,7 @@ def plot_response_curves():
             
             # Make predictions
             preds = pmod.predict_proba(background_samples)[:, 1]
+            
             all_predictions.append(preds)
         
         # Convert to numpy array for easier calculations
@@ -638,7 +639,7 @@ def plot_multiyear_predictions():
         # Make predictions
         logger.info(f"Predicting krill presence for {year}...")
         presence_probs = pmod.predict_proba(X_pred)[:, 1]  # Probability of presence
-          
+        
         # Store all valid predictions for percentile calculation
         all_predictions.extend(presence_probs)
         
@@ -1213,7 +1214,7 @@ def plot_yearly_indices():
     survey_yearly['PRESENCE_PROPORTION'] = survey_yearly['PRESENCE_COUNT'] / survey_yearly['TOTAL_COUNT']
     
     # Filter years with sufficient data points (at least 10)
-    survey_yearly = survey_yearly[survey_yearly['TOTAL_COUNT'] >= 10]
+    survey_yearly = survey_yearly[survey_yearly['TOTAL_COUNT'] >= 2]
     survey_yearly = survey_yearly[(survey_yearly['YEAR'] >= 1976) & (survey_yearly['YEAR'] <= 2016)]
     
     # Load fused data for predictions
@@ -1309,7 +1310,7 @@ def plot_yearly_indices():
         X_pred = (X_pred - X_pred.mean()) / X_pred.std()
         
         # Make predictions - get probability of presence
-        presence_probs = pmod.predict_proba(X_pred)[:, 1]  # Probability of presence
+        presence_probs = pmod.predict_proba(X_pred)[:, 1]
         
         # Calculate average probability of presence for this year
         avg_presence_prob = np.mean(presence_probs)
@@ -1323,6 +1324,12 @@ def plot_yearly_indices():
     
     # Sort by year
     prediction_yearly = prediction_yearly.sort_values('YEAR')
+    
+    # Apply min-max normalization to the yearly average probabilities
+    if len(prediction_yearly) > 1:  # Only normalize if we have more than one year
+        min_prob = prediction_yearly['AVG_PRESENCE_PROB'].min()
+        max_prob = prediction_yearly['AVG_PRESENCE_PROB'].max()
+        prediction_yearly['AVG_PRESENCE_PROB'] = (prediction_yearly['AVG_PRESENCE_PROB'] - min_prob) / (max_prob - min_prob)
     
     # Load catch data
     try:
@@ -1380,8 +1387,8 @@ def plot_yearly_indices():
              color='blue', linewidth=2, markersize=8, label='Survey Presence Proportion')
     
     # Plot prediction index (average probability of presence)
-    plt.plot(prediction_yearly['YEAR'], prediction_yearly['AVG_PRESENCE_PROB'], 's-', 
-             color='red', linewidth=2, markersize=8, label='Predicted Presence Probability')
+    plt.plot(prediction_yearly['YEAR'], prediction_yearly['AVG_PRESENCE_PROB'], '--.', 
+             color='red', linewidth=1, markersize=8, label='Predicted Presence Probability (normalized)')
     
     # Plot catch index as dots if available
     if catch_yearly is not None and not catch_yearly.empty:
