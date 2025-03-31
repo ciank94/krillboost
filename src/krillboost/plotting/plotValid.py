@@ -568,10 +568,10 @@ def plot_multiyear_predictions():
     # Define map boundaries and grid step based on data
     grid_step = 0.5
     # Define grid bounds based on data, consistent with plotClass.py
-    lon_min = krillData['LONGITUDE'].min()
-    lon_max = krillData['LONGITUDE'].max() 
-    lat_min = krillData['LATITUDE'].min() 
-    lat_max = krillData['LATITUDE'].max() 
+    lon_min = krillData['LONGITUDE'].min() - 0.3
+    lon_max = krillData['LONGITUDE'].max() + 0.3
+    lat_min = krillData['LATITUDE'].min() - 1
+    lat_max = krillData['LATITUDE'].max() + 0.3
     lonBounds = [lon_min, lon_max]
     latBounds = [lat_min, lat_max]
     logger.info(f"Using map bounds: lon=[{lon_min}, {lon_max}], lat=[{lat_min}, {lat_max}], grid_step={grid_step}")
@@ -742,9 +742,9 @@ def plot_multiyear_predictions():
         gl.top_labels = False
         gl.right_labels = False
         
-        # Add year as an annotation in the bottom left corner with high z-order to ensure visibility
-        ax.annotate(f'{year}', xy=(0.05, 0.05), xycoords='axes fraction', 
-                   fontsize=24, fontweight='bold', ha='left', va='bottom',
+        # Add year as an annotation in the bottom right corner with high z-order to ensure visibility
+        ax.annotate(f'{year}', xy=(0.95, 0.05), xycoords='axes fraction', 
+                   fontsize=24, fontweight='bold', ha='right', va='bottom',
                    bbox=dict(boxstyle='round,pad=0.3', fc='white', alpha=0.7),
                    zorder=1000)  # High z-order to ensure it's on top
         

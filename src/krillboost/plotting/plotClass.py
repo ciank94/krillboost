@@ -718,7 +718,7 @@ def plot_feature_importance():
         krillData = krillData.drop(columns=unnamed_cols)
     
     # Get feature names (excluding target columns)
-    feature_names = [col for col in krillData.columns if col not in ['KRILL_PRESENCE', 'KRILL_LOG10', 'KRILL_SQRT', 'KRILL_LOGN', 'KRILL_QUAN', 'KRILL_ORIGINAL']]
+    feature_names = [col for col in krillData.columns if col not in ['KRILL_PRESENCE', 'KRILL_LOG10', 'KRILL_SQRT', 'KRILL_LOGN', 'KRILL_QUAN', 'KRILL_ORIGINAL', 'LATITUDE', 'LONGITUDE', 'DATE', 'YEAR', 'MONTH', 'DAY']]
     
     # Load model
     pmod = xgb.XGBClassifier()
