@@ -236,7 +236,7 @@ def plot_roc_curve():
         krillData = krillData.drop(columns=unnamed_cols)
     
     # Separate features and targets
-    X = krillData.drop(columns=['KRILL_PRESENCE', 'KRILL_LOG10'])
+    X = krillData.drop(columns=['KRILL_PRESENCE', 'KRILL_LOG10', 'KRILL_SQRT', 'KRILL_LOGN', 'KRILL_QUAN', 'KRILL_ORIGINAL', 'LATITUDE', 'LONGITUDE'])
     y_presence = krillData['KRILL_PRESENCE']
     
     # Feature scaling for better model performance
@@ -782,7 +782,7 @@ def plot_feature_importance():
     # Add labels and title
     plt.xlabel('Relative Importance (%)', fontsize=12)
     plt.ylabel('Feature', fontsize=12)
-    plt.title('Top 10 Features for Predicting Krill Presence', fontsize=14)
+    #plt.title('Top 10 Features for Predicting Krill Presence', fontsize=14)
     
     # Add grid lines for better readability
     plt.grid(axis='x', linestyle='--', alpha=0.7)
