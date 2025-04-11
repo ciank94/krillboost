@@ -56,6 +56,7 @@ def plotEnvData():
     # Create figure with 3x2 subplots
     plt.rcParams.update({'font.size': 20})  # Set default font size to 20
     fig = plt.figure(figsize=(28, 24))  # Increased height for better spacing
+    fig.patch.set_facecolor((0.1216, 0.6510, 0.5804))
     gs = fig.add_gridspec(3, 2, hspace=0.001, wspace=0.25)  # Increased hspace from 0.005 to 0.4
         
     projection = ccrs.PlateCarree()
@@ -185,8 +186,15 @@ def plotEnvData():
         gl.ylabel_style = {'size': 20}
         
     plotName = f"output/figures/envData.png"
+    #plotName = f"output/figures/envData.eps"
     os.makedirs(os.path.dirname(plotName), exist_ok=True)
-    plt.savefig(plotName, dpi=300, bbox_inches='tight')
+    # plt.savefig(plotName, dpi=300, bbox_inches='tight')
+    plt.savefig(plotName, bbox_inches='tight', format='png', dpi=300)
+    svg = True
+    if svg:
+        heatmap = plt.imread(plotName)
+        svg_path = f"output/figures/envData.svg"
+        plt.imsave(svg_path, heatmap, format='svg')
     plt.close()
     logger.info(f"Saved environmental data plot to: {plotName}")
     return

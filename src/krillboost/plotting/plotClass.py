@@ -254,7 +254,8 @@ def plot_roc_curve():
     roc_auc = auc(fpr, tpr)
     
     # Create figure
-    plt.figure(figsize=(8, 6))
+    fig = plt.figure(figsize=(8, 6))
+    fig.patch.set_facecolor((0.1216, 0.6510, 0.5804))
     
     # Plot ROC curve
     plt.plot(fpr, tpr, color='darkorange', lw=2, 
@@ -280,6 +281,10 @@ def plot_roc_curve():
     os.makedirs('output/figures', exist_ok=True)
     plt_path = 'output/figures/roc_curve.png'
     plt.savefig(plt_path, dpi=300, bbox_inches='tight')
+    svg = True
+    if svg:
+        svg_path = 'output/figures/roc_curve.svg'
+        plt.savefig(svg_path, bbox_inches='tight')
     logger.info(f"Saved ROC curve to: {plt_path}")
     
     # Close the figure to free memory

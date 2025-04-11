@@ -545,9 +545,11 @@ def plot_multiyear_predictions():
     # Set up figure with parameters matching envData.png
     plt.rcParams.update({'font.size': 20})  # Set default font size to 20
     fig = plt.figure(figsize=(14, 12))
+    fig.patch.set_facecolor((0.1216, 0.6510, 0.5804))
     
     # Create a 3x2 grid for subplots with minimal spacing as per memory
     gs = fig.add_gridspec(3, 2, hspace=0.05, wspace=0.05)
+    #gs = fig.add_gridspec(3, 2)
     axes = []
     
     # Create subplots with PlateCarree projection
@@ -566,7 +568,7 @@ def plot_multiyear_predictions():
         return
     
     # Define map boundaries and grid step based on data
-    grid_step = 0.5
+    grid_step = 5
     # Define grid bounds based on data, consistent with plotClass.py
     lon_min = krillData['LONGITUDE'].min() - 0.3
     lon_max = krillData['LONGITUDE'].max() + 0.3
@@ -651,6 +653,8 @@ def plot_multiyear_predictions():
             lat_idx = np.where(lats == krillDataset['LATITUDE'][idx])[0][0]
             lon_idx = np.where(lons == krillDataset['LONGITUDE'][idx])[0][0]
             presence_grid[lat_idx, lon_idx] = presence_probs[j]
+        
+        original_grid = presence_grid
 
         # NaN-aware gaussian smoothing
         # First create a mask of valid (non-NaN) values
@@ -671,6 +675,10 @@ def plot_multiyear_predictions():
         
         # Restore NaN values where we had no data influence (threshold can be adjusted)
         presence_grid[smooth_mask < 0.2] = np.nan
+
+
+        presence_grid = original_grid
+        
 
         # Store the grid for this year
         all_prediction_grids.append({
@@ -728,13 +736,13 @@ def plot_multiyear_predictions():
         
         if i >= 4:  # Bottom row
             # Add x-axis label
-            ax.set_xlabel('Longitude', fontsize=14)
+            ax.set_xlabel('Longitude', fontsize=20)
         
         if i % 2 == 0:  # Left column
             gl.left_labels = True
             gl.ylabel_style = {'size': 14}
             # Add y-axis label
-            ax.set_ylabel('Latitude', fontsize=14)
+            ax.set_ylabel('Latitude', fontsize=20)
         else:
             gl.left_labels = False
             
@@ -772,7 +780,7 @@ def plot_multiyear_predictions():
             categorized_grid[mask] = q_idx
         
         # Plot the categorized grid with contourf for smoother transitions
-        im = ax.pcolormesh(
+        im = ax.contourf(
             lon_grid, lat_grid, categorized_grid,
             transform=ccrs.PlateCarree(),
             cmap=contour_cmap,
@@ -818,7 +826,7 @@ def plot_multiyear_predictions():
     cbar.ax.tick_params(labelsize=14)  # Font size as per memory
     
     # Add colorbar label with improved styling
-    cbar.set_label('Krill Presence Probability\nQuantiles', fontsize=20, labelpad=15)  # Font size as per memory
+    cbar.set_label('Krill Presence Probability', fontsize=20)  # Font size as per memory
     
     # Adjust layout to fit labels and colorbar
     plt.tight_layout(rect=[0, 0, 0.9, 1])
@@ -826,7 +834,13 @@ def plot_multiyear_predictions():
     # Save figure with higher resolution
     os.makedirs('output/figures', exist_ok=True)
     plt_path = 'output/figures/multiyear_krill_contours.png'
-    plt.savefig(plt_path, dpi=600, bbox_inches='tight')
+    plt.savefig(plt_path, format='png', dpi=300)
+    # if convert to svg:
+    svg = True
+    if svg:
+        heatmap = plt.imread(plt_path)
+        svg_path = 'output/figures/multiyear_krill_contours.svg'
+        plt.imsave(svg_path, heatmap, format='svg')
     logger.info(f"Saved high-resolution multi-year krill contours plot to: {plt_path}")
     
     # Close the figure to free memory
